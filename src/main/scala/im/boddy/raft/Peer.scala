@@ -25,8 +25,7 @@ trait Broker {
 }
 
 abstract class Peer[T](val id: Id,
-                       val repository: LogRepository[T],
-                       val timeout: Timeout) extends Runnable with Broker {
+                       val timeout: Timeout) extends Runnable with Broker with LogRepository[T]  {
 
   implicit def toSent(pdu: PDU) : SourcedPDU = SourcedPDU(id, pdu)
 
@@ -71,7 +70,7 @@ abstract class Peer[T](val id: Id,
       case _ if source != leader => throw new IllegalStateException()
       case _ => {
         if (pdu.entries.nonEmpty) {
-          repository.putEntries(pdu.entries)
+          putEntries(pdu.entries)
           lastCommittedIndex = Math.max(lastCommittedIndex, pdu.committedIndex)
         }
         AppendState.SUCCESS
