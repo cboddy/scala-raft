@@ -8,6 +8,9 @@ package object raft {
   type Index = Long
   type Timeout = Long
 
+  val NOT_VOTED : Id = -1
+  val NO_LEADER : Id = -1
+
   trait Logging {
     def log = Logger.getGlobal
   }

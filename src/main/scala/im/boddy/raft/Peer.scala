@@ -4,7 +4,7 @@ import java.util.concurrent.{TimeUnit, TimeoutException}
 
 import scala.collection.mutable
 
-class Leader[T] {
+class LeaderState {
   val nextIndex: collection.mutable.Map[Id, Index] = new mutable.HashMap[Id, Index]()
   val matchIndex: collection.mutable.Map[Id, Index] = new mutable.HashMap[Id, Index]()
 
@@ -21,7 +21,7 @@ case object State extends Enumeration {
 
 abstract class Broker {
   def send(pdu: SourcedPDU)
-  def receive() : java.util.concurrent.Future[SourcedPDU]
+  def receive : java.util.concurrent.Future[SourcedPDU]
 }
 
 abstract class Peer[T](val id: Id,
@@ -32,11 +32,12 @@ abstract class Peer[T](val id: Id,
   implicit def toSent(pdu: PDU) : SourcedPDU = SourcedPDU(id, pdu)
 
   private var currentTerm: Term = 0
-  private var lastCommittedIndex: Index  = 0
+  private var lastCommittedIndex: Index = 0
   private var lastAppliedIndex : Index  = 0
   private var lastAppliedTerm : Term  = 0
 
-  private var leader : Id = -1
+  private var leader : Id = NO_LEADER
+  private var votedFor : Id = NOT_VOTED
 
   @volatile var isFinished = false
 
@@ -68,6 +69,7 @@ abstract class Peer[T](val id: Id,
     val appendState: AppendState.Value = pdu match {
       case _ if pdu.term < currentTerm => AppendState.TERM_NOT_CURRENT
       case _ if lastAppliedIndex != pdu.previousIndex || lastAppliedTerm != pdu.previousTerm => AppendState.MISSING_PREVIOUS_ENTRY
+      case _ if source != leader => throw new IllegalStateException()
       case _ => {
         if (pdu.entries.nonEmpty) {
           repository.putEntries(pdu.entries)
@@ -82,11 +84,16 @@ abstract class Peer[T](val id: Id,
 
   def handleAppendAck(ack : SourcedPDU) = {
     val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[AppendEntriesAck])
+
   }
 
   def handleRequestVote(requestVote: SourcedPDU) = {
     val (source, pdu) = (requestVote.source, requestVote.pdu.asInstanceOf[RequestVote])
-
+    val voteState: RequestVoteState.Value = pdu match {
+      case _ if pdu.term < currentTerm => RequestVoteState.TERM_NOT_CURRENT
+      case _ if lastAppliedIndex > pdu.lastLogIndex || lastAppliedTerm > pdu.lastLogTerm => RequestVoteState.CANDIDATE_MISSING_PREVIOUS_ENTRY
+//      case _ if votedFor != NOT_VOTED  && votedFor != source => RequestVoteState
+    }
   }
 
   def handleRequestAck(ack: SourcedPDU) = {
