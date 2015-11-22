@@ -19,15 +19,14 @@ case object State extends Enumeration {
   val FOLLOWER, CANDIDATE, LEADER = values
 }
 
-abstract class Broker {
+trait Broker {
   def send(pdu: SourcedPDU)
   def receive : java.util.concurrent.Future[SourcedPDU]
 }
 
 abstract class Peer[T](val id: Id,
                        val repository: LogRepository[T],
-                       val broker: Broker,
-                       val timeout: Timeout) extends Runnable {
+                       val timeout: Timeout) extends Runnable with Broker {
 
   implicit def toSent(pdu: PDU) : SourcedPDU = SourcedPDU(id, pdu)
 
@@ -46,7 +45,7 @@ abstract class Peer[T](val id: Id,
   def run(): Unit = {
     while (! isFinished) {
       try {
-        val received: SourcedPDU = broker.receive.get(timeout, TimeUnit.MILLISECONDS)
+        val received: SourcedPDU = receive.get(timeout, TimeUnit.MILLISECONDS)
 
         val handler: (SourcedPDU => Unit) = received.pdu match {
           case _ : AppendEntries[T] => handleAppend
@@ -79,7 +78,7 @@ abstract class Peer[T](val id: Id,
       }
     }
 
-    broker.send(AppendEntriesAck(currentTerm, appendState))
+    send(AppendEntriesAck(currentTerm, appendState))
   }
 
   def handleAppendAck(ack : SourcedPDU) = {
