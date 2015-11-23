@@ -1,6 +1,6 @@
 package im.boddy.raft
 
-import java.util.concurrent.{TimeUnit, TimeoutException}
+import java.util.concurrent.TimeoutException
 
 import scala.collection.mutable
 
@@ -21,12 +21,11 @@ case object State extends Enumeration {
 
 trait Broker {
   def send(pdu: AddressedPDU)
-  def receive(id: Id, timeout: Timeout) : java.util.concurrent.Future[AddressedPDU]
+  def receive(timeout: Timeout) : java.util.concurrent.Future[AddressedPDU]
 }
 
 abstract class Peer[T](val id: Id,
-                       val broker: Broker,
-                       val timeout: Timeout) extends Runnable with LogRepository[T]  {
+                       val timeout: Timeout) extends Runnable with LogRepository[T] with Broker {
 
   def addressedPDU(pdu: PDU, target: Id) : AddressedPDU = AddressedPDU(id, target, pdu)
 
@@ -45,7 +44,7 @@ abstract class Peer[T](val id: Id,
   def run(): Unit = {
     while (! isFinished) {
       try {
-        val received: AddressedPDU = broker.receive(id, timeout).get()
+        val received: AddressedPDU = receive(timeout).get()
 
         val handler: (AddressedPDU => Unit) = received.pdu match {
           case _ : AppendEntries[T] => handleAppend
@@ -81,7 +80,7 @@ abstract class Peer[T](val id: Id,
       }
     }
 
-    broker.send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastAppliedIndex, lastAppliedTerm), source))
+    send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastAppliedIndex, lastAppliedTerm), source))
   }
 
   def handleAppendAck(ack : AddressedPDU) = {

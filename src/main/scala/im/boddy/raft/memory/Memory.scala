@@ -9,21 +9,38 @@ import AsyncBroker._
 
 import scala.collection.mutable.ArrayBuffer
 
-class AsyncBroker[T] extends Broker {
+class AsyncBroker[T] {
 
   private val msgs = new mutable.HashMap[Id, BlockingQueue[AddressedPDU]]()
   
   private val threadPool = Executors.newCachedThreadPool()
-  
-  def addPeer(peer: Peer[T]) = msgs.put(peer.id, new ArrayBlockingQueue[AddressedPDU](1))
 
-  override def send(pdu: AddressedPDU): Unit = {
+  def addPeer(id: Id, timeout: Timeout) : Peer[T] = {
+
+    val log = new BufferLogRepository[T]()
+
+    val peer = new Peer[T](id, timeout) {
+
+      override def getEntries(startIndex: Index, endIndex: Index)  = log.getEntries(startIndex, endIndex)
+
+      override def putEntries(entries: Seq[LogEntry[T]]) = log.putEntries(entries)
+
+      override def send(pdu: AddressedPDU): Unit = offer(pdu)
+
+      override def receive(timeout: Timeout): Future[AddressedPDU] = poll(id, timeout)
+    }
+
+    msgs.put(peer.id, new ArrayBlockingQueue[AddressedPDU](1))
+    return peer
+  }
+
+  def offer(pdu: AddressedPDU): Unit = {
     val maybe: Option[BlockingQueue[AddressedPDU]] = msgs.get(pdu.target)
     if (maybe.isEmpty) throw new IllegalStateException("No peer with id "+ pdu.target)
     maybe.get.offer(pdu, TIMEOUT, MILLIS)
   }
 
-  override def receive(id: Id, timeout: Timeout): Future[AddressedPDU] = {
+  def poll(id: Id, timeout: Timeout): Future[AddressedPDU] = {
     val maybe: Option[BlockingQueue[AddressedPDU]] = msgs.get(id)
     if (maybe.isEmpty) throw new IllegalStateException("No peer with id "+ id)
 
