@@ -20,14 +20,15 @@ case object State extends Enumeration {
 }
 
 trait Broker {
-  def send(pdu: SourcedPDU)
-  def receive : java.util.concurrent.Future[SourcedPDU]
+  def send(pdu: AddressedPDU)
+  def receive(id: Id, timeout: Timeout) : java.util.concurrent.Future[AddressedPDU]
 }
 
 abstract class Peer[T](val id: Id,
-                       val timeout: Timeout) extends Runnable with Broker with LogRepository[T]  {
+                       val broker: Broker,
+                       val timeout: Timeout) extends Runnable with LogRepository[T]  {
 
-  implicit def toSent(pdu: PDU) : SourcedPDU = SourcedPDU(id, pdu)
+  def addressedPDU(pdu: PDU, target: Id) : AddressedPDU = AddressedPDU(id, target, pdu)
 
   private var currentTerm: Term = 0
   private var lastCommittedIndex: Index = 0
@@ -44,9 +45,9 @@ abstract class Peer[T](val id: Id,
   def run(): Unit = {
     while (! isFinished) {
       try {
-        val received: SourcedPDU = receive.get(timeout, TimeUnit.MILLISECONDS)
+        val received: AddressedPDU = broker.receive(id, timeout).get()
 
-        val handler: (SourcedPDU => Unit) = received.pdu match {
+        val handler: (AddressedPDU => Unit) = received.pdu match {
           case _ : AppendEntries[T] => handleAppend
           case _ : AppendEntriesAck => handleAppendAck
           case _ : RequestVote => handleRequestVote
@@ -61,7 +62,10 @@ abstract class Peer[T](val id: Id,
     }
   }
 
-  def handleAppend(appendEntries: SourcedPDU) = {
+  def handleAppend(appendEntries: AddressedPDU) = {
+    if (appendEntries.target != id)
+      throw new IllegalStateException("PDU "+ appendEntries +" not intended for peer "+ id)
+
     val (source, pdu) = (appendEntries.source, appendEntries.pdu.asInstanceOf[AppendEntries[T]])
 
     val appendState: AppendState.Value = pdu match {
@@ -77,16 +81,17 @@ abstract class Peer[T](val id: Id,
       }
     }
 
-    send(AppendEntriesAck(currentTerm, appendState))
+    broker.send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastAppliedIndex, lastAppliedTerm), source))
   }
 
-  def handleAppendAck(ack : SourcedPDU) = {
+  def handleAppendAck(ack : AddressedPDU) = {
     val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[AppendEntriesAck])
 
   }
 
-  def handleRequestVote(requestVote: SourcedPDU) = {
+  def handleRequestVote(requestVote: AddressedPDU) = {
     val (source, pdu) = (requestVote.source, requestVote.pdu.asInstanceOf[RequestVote])
+
     val voteState: RequestVoteState.Value = pdu match {
       case _ if pdu.term < currentTerm => RequestVoteState.TERM_NOT_CURRENT
       case _ if lastAppliedIndex > pdu.lastLogIndex || lastAppliedTerm > pdu.lastLogTerm => RequestVoteState.CANDIDATE_MISSING_PREVIOUS_ENTRY
@@ -94,7 +99,7 @@ abstract class Peer[T](val id: Id,
     }
   }
 
-  def handleRequestAck(ack: SourcedPDU) = {
+  def handleRequestAck(ack: AddressedPDU) = {
     val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[RequestVoteAck])
   }
 
