@@ -4,15 +4,34 @@ import java.util.concurrent.{TimeUnit, TimeoutException}
 
 import scala.collection.mutable
 
-class LeaderState {
-  val nextIndex: collection.mutable.Map[Id, Index] = new mutable.HashMap[Id, Index]()
-  val matchIndex: collection.mutable.Map[Id, Index] = new mutable.HashMap[Id, Index]()
+class PendingRequest(val id: RequestId, val index: Index, var nSucceeded : Int, var nFailed: Int)
+
+class LeaderState(groupSize: Int) {
+  val nextIndex = new mutable.HashMap[Id, Index]()
+  val matchIndex = new mutable.HashMap[Id, Index]()
+  val pending = new mutable.HashMap[ClientId, PendingRequest]()
+
 
   def reset = {
     nextIndex.clear()
     matchIndex.clear()
   }
 
+  def requestHasMajority(client: ClientId, request: RequestId, index: Index) = {
+    val maybe = pending.get(client)
+    if (maybe.isDefined) {
+      val req = maybe.get
+      req.id == request && req.index == index && (req.nSucceeded >= groupSize/2 || req.nFailed >= groupSize/2)
+    } else false
+  }
+
+  def removePending(id: ClientId) = pending.remove(id)
+
+  def containsPending(id: ClientId) = pending.contains(id)
+
+  def addPending(id: ClientId, req: PendingRequest) = pending.put(id, req)
+
+  def leaderTick = ???
 }
 
 case class Config(peers: Seq[Id])
@@ -124,7 +143,7 @@ abstract class Peer[T](val id: Id,
     state = State.LEADER
     leader = id
     leaderState.reset
-    config.peers.filter(_ != id).foreach(leaderState.matchIndex.put(_, lastCommittedIndex))
+    config.peers.filterNot(_ == id).foreach(leaderState.matchIndex.put(_, lastCommittedIndex))
   }
 
   def descendToFollower(withTerm: Term, withLeader: Id) {
@@ -150,6 +169,7 @@ abstract class Peer[T](val id: Id,
     val pdu = RequestVote(currentTerm, id, lastAppliedIndex, lastAppliedTerm)
     broadcast(pdu)
   }
+
 
   def shouldIncrementTerm = ???
   def resetVotes = ???

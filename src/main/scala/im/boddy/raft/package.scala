@@ -8,6 +8,8 @@ package object raft {
   type Term = Long
   type Id = Long
   type Index = Long
+  type ClientId = Long
+  type RequestId = Long
 
   val NOT_VOTED : Id = -1
   val NO_LEADER : Id = -1
