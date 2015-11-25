@@ -5,11 +5,10 @@ import im.boddy.raft._
 import java.util.concurrent._
 
 import scala.collection.mutable
-import AsyncBroker._
 
 import scala.collection.mutable.ArrayBuffer
 
-class AsyncBroker[T] {
+class AsyncBroker[T](config: Config, timeout: Timeout) {
 
   private val msgs = new mutable.HashMap[Id, BlockingQueue[AddressedPDU]]()
   
@@ -17,13 +16,13 @@ class AsyncBroker[T] {
 
   def addPeer(id: Id, timeout: Timeout) : Peer[T] = {
 
-    val log = new BufferLogRepository[T]()
+    val repo = new BufferLogRepository[T]()
 
-    val peer = new Peer[T](id, timeout) {
+    val peer = new Peer[T](id, config, timeout) {
 
-      override def getEntries(startIndex: Index, endIndex: Index)  = log.getEntries(startIndex, endIndex)
+      override def getEntries(startIndex: Index, endIndex: Index)  = repo.getEntries(startIndex, endIndex)
 
-      override def putEntries(entries: Seq[LogEntry[T]]) = log.putEntries(entries)
+      override def putEntries(entries: Seq[LogEntry[T]]) = repo.putEntries(entries)
 
       override def send(pdu: AddressedPDU): Unit = offer(pdu)
 
@@ -37,7 +36,7 @@ class AsyncBroker[T] {
   def offer(pdu: AddressedPDU): Unit = {
     val maybe: Option[BlockingQueue[AddressedPDU]] = msgs.get(pdu.target)
     if (maybe.isEmpty) throw new IllegalStateException("No peer with id "+ pdu.target)
-    maybe.get.offer(pdu, TIMEOUT, MILLIS)
+    maybe.get.offer(pdu, timeout.count, timeout.unit)
   }
 
   def poll(id: Id, timeout: Timeout): Future[AddressedPDU] = {
@@ -45,7 +44,7 @@ class AsyncBroker[T] {
     if (maybe.isEmpty) throw new IllegalStateException("No peer with id "+ id)
 
     val callable: Callable[AddressedPDU] = new  Callable[AddressedPDU] {
-      override def call(): AddressedPDU = maybe.get.poll(timeout, MILLIS)
+      override def call(): AddressedPDU = maybe.get.poll(timeout.count, timeout.unit)
     }
     threadPool.submit(callable)
   }
@@ -55,12 +54,6 @@ class AsyncBroker[T] {
     threadPool.awaitTermination(1, TimeUnit.MINUTES)
   }
 }
-
-object AsyncBroker {
-  val TIMEOUT:  Timeout = 500
-  val MILLIS = TimeUnit.MILLISECONDS
-}
-
 
 class BufferLogRepository[T] extends LogRepository[T] {
   

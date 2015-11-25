@@ -1,6 +1,6 @@
 package im.boddy.raft
 
-import java.util.concurrent.TimeoutException
+import java.util.concurrent.{TimeUnit, TimeoutException}
 
 import scala.collection.mutable
 
@@ -15,6 +15,8 @@ class LeaderState {
 
 }
 
+case class Config(peers: Seq[Id])
+
 case object State extends Enumeration {
   val FOLLOWER, CANDIDATE, LEADER = values
 }
@@ -25,21 +27,24 @@ trait Broker {
 }
 
 abstract class Peer[T](val id: Id,
-                       val timeout: Timeout) extends Runnable with LogRepository[T] with Broker {
+                       val config:  Config,
+                       val timeout: Timeout) extends Runnable with LogRepository[T] with Broker with Logging {
 
-  def addressedPDU(pdu: PDU, target: Id) : AddressedPDU = AddressedPDU(id, target, pdu)
+  if (! config.peers.contains(id)) throw new IllegalStateException("peer "+ id + " not in config " + config)
 
-  private var currentTerm: Term = 0
-  private var lastCommittedIndex: Index = 0
-  private var lastAppliedIndex : Index  = 0
-  private var lastAppliedTerm : Term  = 0
+  private val leaderState = new LeaderState
+  private var currentTerm: Term = NO_TERM
+  private var votingTerm: Term = NO_TERM
+  private var lastCommittedIndex: Index = NO_TERM
+  private var lastAppliedIndex : Index  = NO_TERM
+  private var lastAppliedTerm : Term  = NO_TERM
 
   private var leader : Id = NO_LEADER
   private var votedFor : Id = NOT_VOTED
 
   @volatile var isFinished = false
 
-  private val state = State.CANDIDATE
+  private var state = State.CANDIDATE
 
   def run(): Unit = {
     while (! isFinished) {
@@ -60,6 +65,8 @@ abstract class Peer[T](val id: Id,
       }
     }
   }
+
+  def addressedPDU(pdu: PDU, target: Id) : AddressedPDU = AddressedPDU(id, target, pdu)
 
   def handleAppend(appendEntries: AddressedPDU) = {
     if (appendEntries.target != id)
@@ -94,7 +101,7 @@ abstract class Peer[T](val id: Id,
     val voteState: RequestVoteState.Value = pdu match {
       case _ if pdu.term < currentTerm => RequestVoteState.TERM_NOT_CURRENT
       case _ if lastAppliedIndex > pdu.lastLogIndex || lastAppliedTerm > pdu.lastLogTerm => RequestVoteState.CANDIDATE_MISSING_PREVIOUS_ENTRY
-//      case _ if votedFor != NOT_VOTED  && votedFor != source => RequestVoteState
+      //      case _ if votedFor != NOT_VOTED  && votedFor != source => RequestVoteState
     }
   }
 
@@ -102,20 +109,46 @@ abstract class Peer[T](val id: Id,
     val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[RequestVoteAck])
   }
 
-  def handleTimeout = {
+  def handleTimeout = callElection
 
+  def broadcast(pdu: PDU) = config.peers
+    .filterNot(_ == id)
+    .map(addressedPDU(pdu, _))
+    .foreach(send)
+
+
+  def ascendToLeader {
+    log.fine("peer "+ this.toString() +" ascending to leader")
+    state = State.LEADER
+    leader = id
+    leaderState.reset
+    config.peers.filter(_ != id).foreach(leaderState.matchIndex.put(_, lastCommittedIndex))
   }
 
-  def ascendToLeader: Unit = {
-
+  def descendToFollower(withTerm: Term, withLeader: Id) {
+    log.fine("peer " + this.toString() +" descending to follower of leader "+ withLeader +" with  term "+ withTerm)
+    state = State.FOLLOWER
+    leader = withLeader
+    currentTerm = withTerm
   }
 
-  def descendToFollower(term : Term, leader: Id): Unit = {
+  def callElection {
+    if (shouldIncrementTerm) {
+      currentTerm += 1
+      resetVotes
+    }
 
+    addVote(id, true)
+
+    log.fine("peer "+ this.toString() +" called election for term "+ currentTerm)
+
+    val pdu = RequestVote(currentTerm, id, lastAppliedIndex, lastAppliedTerm)
+    broadcast(pdu)
   }
 
-  def callElection: Unit = {
+  def shouldIncrementTerm = ???
+  def resetVotes = ???
+  def addVote(id: Id, vote: Boolean) = ???
 
-  }
+  override def toString() = id.toString
 }
-
