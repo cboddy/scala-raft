@@ -118,7 +118,9 @@ abstract class Peer[T](val id: Id,
 
 
   def ascendToLeader {
-    log.fine("peer "+ this.toString() +" ascending to leader")
+    lazy val msg = "peer " + this.toString() + " ascending to leader"
+    log.fine(msg)
+
     state = State.LEADER
     leader = id
     leaderState.reset
@@ -126,21 +128,24 @@ abstract class Peer[T](val id: Id,
   }
 
   def descendToFollower(withTerm: Term, withLeader: Id) {
-    log.fine("peer " + this.toString() +" descending to follower of leader "+ withLeader +" with  term "+ withTerm)
+    lazy val msg = "peer " + this.toString() + " descending to follower of leader " + withLeader + " with  term " + withTerm
+    log.fine(msg)
+
     state = State.FOLLOWER
     leader = withLeader
     currentTerm = withTerm
   }
 
   def callElection {
+    lazy val msg = "peer "+ this.toString() +" called election for term "+ currentTerm
+    log.fine(msg)
+
     if (shouldIncrementTerm) {
       currentTerm += 1
       resetVotes
     }
 
     addVote(id, true)
-
-    log.fine("peer "+ this.toString() +" called election for term "+ currentTerm)
 
     val pdu = RequestVote(currentTerm, id, lastAppliedIndex, lastAppliedTerm)
     broadcast(pdu)
