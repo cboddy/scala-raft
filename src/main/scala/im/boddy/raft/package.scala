@@ -19,10 +19,9 @@ package object raft {
   def now = System.currentTimeMillis()
 
   case class Duration(count: Int, unit: TimeUnit) extends Ordered[Duration] {
-
     lazy val toMillis : Long = unit.toMillis(count)
-
     override def compare(that: Duration) = this.toMillis.compareTo(that.toMillis)
-
   }
+
+  case class Config(peers: Seq[Id])
 }

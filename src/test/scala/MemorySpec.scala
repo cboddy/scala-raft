@@ -14,19 +14,17 @@ class MemorySpec extends Specification with AfterAll with Logging {
   val ids = (0 until 3).map(_.toLong)
   val timeout: Duration = Duration(1, TimeUnit.SECONDS)
   val broker = new AsyncBroker[Int](Config(ids), timeout)
-  lazy val peers = for (id <- ids) yield broker.addPeer(id, timeout)
+  lazy val peers = ids.map(broker.addPeer(_, timeout))
   "Memory Raft System" should {
 
     "start the threadpool" in {
       peers
-      Thread.sleep(1000*10)
       ok
     }
 
   }
 
   override def afterAll {
-    peers.foreach(_.close)
     broker.shutdown
   }
 

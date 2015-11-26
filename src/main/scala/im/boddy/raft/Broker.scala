@@ -1,12 +1,15 @@
-package im.boddy.raft.memory
+package im.boddy.raft
 
-import java.util.concurrent._
-
-import im.boddy.raft._
+import java.util.concurrent.{TimeUnit, ArrayBlockingQueue, Executors, BlockingQueue}
 
 import scala.collection.mutable
 
-import scala.collection.mutable.ArrayBuffer
+
+trait Broker {
+  def send(pdu: AddressedPDU)
+  def receive(timeout: Duration) : Option[AddressedPDU]
+}
+
 
 class AsyncBroker[T] (config: Config, timeout: Duration) extends Logging {
 
@@ -50,22 +53,9 @@ class AsyncBroker[T] (config: Config, timeout: Duration) extends Logging {
     log.info("polling " + id +" with timeout "+ timeout)
     maybe.get.poll(timeout.count, timeout.unit)
   }
-  
+
   def shutdown {
     threadPool.shutdown()
     threadPool.awaitTermination(1, TimeUnit.MINUTES)
   }
-}
-
-class BufferLogRepository[T] extends LogRepository[T] {
-  
-  val log = new ArrayBuffer[LogEntry[T]]()
-  
-  override def getEntries(startIndex: Index, endIndex: Index): Seq[LogEntry[T]] = {
-    val length: Int = log.size
-    if (length < endIndex) throw new IllegalStateException("Requested index "+ endIndex +" past limit "+ length)
-    log.slice(startIndex.toInt, endIndex.toInt)
-  }
-
-  override def putEntries(entries: Seq[LogEntry[T]]) = log ++= entries
 }

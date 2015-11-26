@@ -1,10 +1,6 @@
 package im.boddy.raft
 
-import java.util.concurrent.TimeoutException
-
 import scala.collection.mutable
-
-import scala.util.control.Exception._
 
 class PendingRequest(val id: RequestId, val index: Index, var nSucceeded : Int, var nFailed: Int)
 
@@ -43,16 +39,10 @@ class LeaderState[T](peer: Peer[T]) {
 
 }
 
-case class Config(peers: Seq[Id])
-
 case object State extends Enumeration {
   val FOLLOWER, CANDIDATE, LEADER = Value
 }
 
-trait Broker {
-  def send(pdu: AddressedPDU)
-  def receive(timeout: Duration) : Option[AddressedPDU]
-}
 
 abstract class Peer[T](val id: Id,
                        val config:  Config,
@@ -147,12 +137,10 @@ abstract class Peer[T](val id: Id,
 
       case _ if pdu.term < currentTerm => RequestVoteState.TERM_NOT_CURRENT
       case _ if lastAppliedIndex > pdu.lastLogIndex || lastAppliedTerm > pdu.lastLogTerm => RequestVoteState.CANDIDATE_MISSING_PREVIOUS_ENTRY
-      case _ if pdu.term == currentTerm => {
-        votedFor match  {
+      case _ if pdu.term == currentTerm => votedFor match {
           case x if x == NOT_VOTED => follow()
           case x if x == source => follow()
           case _ => RequestVoteState.VOTE_ALREADY_CAST
-        }
       }
       case _ => follow()
     }
@@ -164,13 +152,10 @@ abstract class Peer[T](val id: Id,
     val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[RequestVoteAck])
   }
 
-  def handleTimeout = callElection
-
   def broadcast(pdu: PDU) = config.peers
     .filterNot(_ == id)
     .map(addressedPDU(pdu, _))
     .foreach(send)
-
 
   def ascendToLeader {
 
@@ -208,6 +193,7 @@ abstract class Peer[T](val id: Id,
 
   def leaderPing {
     val currentTime = now
+
     if (leaderState.updatePing(currentTime)) {
       leaderState.lastTimePing = currentTime
       broadcast(AppendEntries(currentTerm, leader, lastAppliedIndex, lastAppliedTerm, Seq(), lastCommittedIndex))
