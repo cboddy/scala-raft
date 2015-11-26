@@ -6,23 +6,26 @@ import scala.collection.mutable
 
 class PendingRequest(val id: RequestId, val index: Index, var nSucceeded : Int, var nFailed: Int)
 
-class LeaderState(groupSize: Int) {
+class LeaderState[T](peer: Peer[T]) {
   val nextIndex = new mutable.HashMap[Id, Index]()
   val matchIndex = new mutable.HashMap[Id, Index]()
-  val pending = new mutable.HashMap[ClientId, PendingRequest]()
+  var lastTimePing = NO_PING_SENT
 
+  private val pending = new mutable.HashMap[ClientId, PendingRequest]()
+  private val groupSize = peer.config.peers.length
 
   def reset = {
     nextIndex.clear()
     matchIndex.clear()
   }
 
-  def requestHasMajority(client: ClientId, request: RequestId, index: Index) = {
+  def requestHasMajority(client: ClientId, request: RequestId, index: Index) : Boolean = {
     val maybe = pending.get(client)
     if (maybe.isDefined) {
       val req = maybe.get
       req.id == request && req.index == index && (req.nSucceeded >= groupSize/2 || req.nFailed >= groupSize/2)
-    } else false
+    }
+    else false
   }
 
   def removePending(id: ClientId) = pending.remove(id)
@@ -31,27 +34,33 @@ class LeaderState(groupSize: Int) {
 
   def addPending(id: ClientId, req: PendingRequest) = pending.put(id, req)
 
-  def leaderTick = ???
+  def updatePing(time: Long) : Boolean = {
+    val deltaTime = time - lastTimePing
+    peer.leaderTimeout.toMillis < deltaTime
+  }
+
 }
 
 case class Config(peers: Seq[Id])
 
 case object State extends Enumeration {
-  val FOLLOWER, CANDIDATE, LEADER = values
+  val FOLLOWER, CANDIDATE, LEADER = Value
 }
 
 trait Broker {
   def send(pdu: AddressedPDU)
-  def receive(timeout: Timeout) : java.util.concurrent.Future[AddressedPDU]
+  def receive(timeout: Duration) : java.util.concurrent.Future[AddressedPDU]
 }
 
 abstract class Peer[T](val id: Id,
                        val config:  Config,
-                       val timeout: Timeout) extends Runnable with LogRepository[T] with Broker with Logging {
+                       val electionTimeout: Duration) extends Runnable with LogRepository[T] with Broker with Logging {
 
   if (! config.peers.contains(id)) throw new IllegalStateException("peer "+ id + " not in config " + config)
 
-  private val leaderState = new LeaderState
+  val leaderTimeout = electionTimeout.copy(count = electionTimeout.count/2)
+  private val leaderState = new LeaderState(this)
+
   private var currentTerm: Term = NO_TERM
   private var votingTerm: Term = NO_TERM
   private var lastCommittedIndex: Index = NO_TERM
@@ -67,21 +76,29 @@ abstract class Peer[T](val id: Id,
 
   def run(): Unit = {
     while (! isFinished) {
-      try {
-        val received: AddressedPDU = receive(timeout).get()
 
-        val handler: (AddressedPDU => Unit) = received.pdu match {
-          case _ : AppendEntries[T] => handleAppend
-          case _ : AppendEntriesAck => handleAppendAck
-          case _ : RequestVote => handleRequestVote
-          case _ : RequestVoteAck => handleRequestAck
-          case _ => throw new IllegalStateException("No handler for " + received)
-        }
-
-        handler(received)
+      val opt: Option[AddressedPDU] = try {
+        val timeout = if (state == State.LEADER) leaderTimeout else electionTimeout
+        Some(receive(timeout).get())
       } catch {
-        case _ : TimeoutException => handleTimeout
+        case _ : TimeoutException => None
       }
+
+      if (opt.nonEmpty) {
+        val received = opt.get
+        val pdu = received.pdu
+        val handler: (AddressedPDU => Unit) = pdu match {
+          case _: AppendEntries[T] => handleAppend
+          case _: AppendEntriesAck => handleAppendAck
+          case _: RequestVote => handleRequestVote
+          case _: RequestVoteAck => handleRequestAck
+          case _ => throw new IllegalStateException("No handler for " + pdu)
+        }
+        handler(received)
+      }
+      else if (state != State.LEADER) callElection
+
+      if (state == State.LEADER) leaderPing
     }
   }
 
@@ -170,6 +187,13 @@ abstract class Peer[T](val id: Id,
     broadcast(pdu)
   }
 
+  def leaderPing {
+    val currentTime = now
+    if (leaderState.updatePing(currentTime)) {
+      leaderState.lastTimePing = currentTime
+      broadcast(AppendEntries(currentTerm, leader, lastAppliedIndex, lastAppliedTerm, Seq(), lastCommittedIndex))
+    }
+  }
 
   def shouldIncrementTerm = ???
   def resetVotes = ???

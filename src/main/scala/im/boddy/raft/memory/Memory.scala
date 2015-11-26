@@ -8,13 +8,13 @@ import scala.collection.mutable
 
 import scala.collection.mutable.ArrayBuffer
 
-class AsyncBroker[T](config: Config, timeout: Timeout) {
+class AsyncBroker[T](config: Config, timeout: Duration) {
 
   private val msgs = new mutable.HashMap[Id, BlockingQueue[AddressedPDU]]()
   
   private val threadPool = Executors.newCachedThreadPool()
 
-  def addPeer(id: Id, timeout: Timeout) : Peer[T] = {
+  def addPeer(id: Id, timeout: Duration) : Peer[T] = {
 
     val repo = new BufferLogRepository[T]()
 
@@ -26,7 +26,7 @@ class AsyncBroker[T](config: Config, timeout: Timeout) {
 
       override def send(pdu: AddressedPDU): Unit = offer(pdu)
 
-      override def receive(timeout: Timeout): Future[AddressedPDU] = poll(id, timeout)
+      override def receive(timeout: Duration): Future[AddressedPDU] = poll(id, timeout)
     }
 
     msgs.put(peer.id, new ArrayBlockingQueue[AddressedPDU](1))
@@ -39,7 +39,7 @@ class AsyncBroker[T](config: Config, timeout: Timeout) {
     maybe.get.offer(pdu, timeout.count, timeout.unit)
   }
 
-  def poll(id: Id, timeout: Timeout): Future[AddressedPDU] = {
+  def poll(id: Id, timeout: Duration): Future[AddressedPDU] = {
     val maybe: Option[BlockingQueue[AddressedPDU]] = msgs.get(id)
     if (maybe.isEmpty) throw new IllegalStateException("No peer with id "+ id)
 

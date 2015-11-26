@@ -14,10 +14,19 @@ package object raft {
   val NOT_VOTED : Id = -1
   val NO_LEADER : Id = -1
   val NO_TERM : Term =  -1
+  val NO_PING_SENT: Long = 0
 
   trait Logging {
     def log = Logger.getGlobal
   }
 
-  case class Timeout(count: Int, unit: TimeUnit)
+  def now = System.currentTimeMillis()
+
+  case class Duration(count: Int, unit: TimeUnit) extends Ordered[Duration] {
+
+    lazy val toMillis : Long = unit.toMillis(count)
+
+    override def compare(that: Duration) = this.toMillis.compareTo(that.toMillis)
+
+  }
 }
