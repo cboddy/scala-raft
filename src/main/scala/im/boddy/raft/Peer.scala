@@ -1,8 +1,10 @@
 package im.boddy.raft
 
-import java.util.concurrent.{TimeUnit, TimeoutException}
+import java.util.concurrent.TimeoutException
 
 import scala.collection.mutable
+
+import scala.util.control.Exception._
 
 class PendingRequest(val id: RequestId, val index: Index, var nSucceeded : Int, var nFailed: Int)
 
@@ -49,17 +51,22 @@ case object State extends Enumeration {
 
 trait Broker {
   def send(pdu: AddressedPDU)
-  def receive(timeout: Duration) : java.util.concurrent.Future[AddressedPDU]
+  def receive(timeout: Duration) : AddressedPDU
 }
 
 abstract class Peer[T](val id: Id,
                        val config:  Config,
-                       val electionTimeout: Duration) extends Runnable with LogRepository[T] with Broker with Logging {
+                       val electionTimeout: Duration) extends Runnable with LogRepository[T] with Broker with Logging with AutoCloseable {
 
   if (! config.peers.contains(id)) throw new IllegalStateException("peer "+ id + " not in config " + config)
 
   val leaderTimeout = electionTimeout.copy(count = electionTimeout.count/2)
+
   private val leaderState = new LeaderState(this)
+
+
+  private val peerVoteResults = collection.mutable.Map() ++ config.peers.map(_ -> NOT_VOTED).toMap
+  private val catcher: Catch[AddressedPDU] = catching(classOf[TimeoutException])
 
   private var currentTerm: Term = NO_TERM
   private var votingTerm: Term = NO_TERM
@@ -77,12 +84,9 @@ abstract class Peer[T](val id: Id,
   def run(): Unit = {
     while (! isFinished) {
 
-      val opt: Option[AddressedPDU] = try {
-        val timeout = if (state == State.LEADER) leaderTimeout else electionTimeout
-        Some(receive(timeout).get())
-      } catch {
-        case _ : TimeoutException => None
-      }
+      val timeout = if (state == State.LEADER) leaderTimeout else electionTimeout
+
+      val opt: Option[AddressedPDU] = catcher.opt(receive(timeout))
 
       if (opt.nonEmpty) {
         val received = opt.get
@@ -134,11 +138,26 @@ abstract class Peer[T](val id: Id,
   def handleRequestVote(requestVote: AddressedPDU) = {
     val (source, pdu) = (requestVote.source, requestVote.pdu.asInstanceOf[RequestVote])
 
+    lazy val follow = () => {
+      descendToFollower(pdu.term, source)
+      RequestVoteState.SUCCESS
+    }
+
     val voteState: RequestVoteState.Value = pdu match {
+
       case _ if pdu.term < currentTerm => RequestVoteState.TERM_NOT_CURRENT
       case _ if lastAppliedIndex > pdu.lastLogIndex || lastAppliedTerm > pdu.lastLogTerm => RequestVoteState.CANDIDATE_MISSING_PREVIOUS_ENTRY
-      //      case _ if votedFor != NOT_VOTED  && votedFor != source => RequestVoteState
+      case _ if pdu.term == currentTerm => {
+        votedFor match  {
+          case NOT_VOTED => follow()
+          case source => follow()
+          case _ => RequestVoteState.VOTE_ALREADY_CAST
+        }
+      }
+      case _ => follow()
     }
+
+    send(addressedPDU(RequestVoteAck(currentTerm, voteState), source))
   }
 
   def handleRequestAck(ack: AddressedPDU) = {
@@ -154,8 +173,8 @@ abstract class Peer[T](val id: Id,
 
 
   def ascendToLeader {
-    lazy val msg = "peer " + this.toString() + " ascending to leader"
-    log.fine(msg)
+
+    log.fine("peer " + this.toString() + " ascending to leader")
 
     state = State.LEADER
     leader = id
@@ -164,8 +183,8 @@ abstract class Peer[T](val id: Id,
   }
 
   def descendToFollower(withTerm: Term, withLeader: Id) {
-    lazy val msg = "peer " + this.toString() + " descending to follower of leader " + withLeader + " with  term " + withTerm
-    log.fine(msg)
+
+    log.fine("peer " + this.toString() + " descending to follower of leader " + withLeader + " with  term " + withTerm)
 
     state = State.FOLLOWER
     leader = withLeader
@@ -173,14 +192,14 @@ abstract class Peer[T](val id: Id,
   }
 
   def callElection {
-    lazy val msg = "peer "+ this.toString() +" called election for term "+ currentTerm
-    log.fine(msg)
+
+    log.fine("peer " + this.toString() + " called election for term " + currentTerm)
 
     if (shouldIncrementTerm) {
       currentTerm += 1
-      resetVotes
-    }
 
+    }
+    resetVotes
     addVote(id, true)
 
     val pdu = RequestVote(currentTerm, id, lastAppliedIndex, lastAppliedTerm)
@@ -195,9 +214,22 @@ abstract class Peer[T](val id: Id,
     }
   }
 
-  def shouldIncrementTerm = ???
-  def resetVotes = ???
-  def addVote(id: Id, vote: Boolean) = ???
+  def shouldIncrementTerm = {
+    if (votingTerm != currentTerm) true
+    else if (peerVoteResults.exists(_ == NOT_VOTED)) false
+    else true
+  }
+
+  def resetVotes: Unit = {
+    votingTerm = currentTerm
+    config.peers.foreach(peerVoteResults.put(_, NOT_VOTED))
+  }
+
+  def addVote(id: Id, vote: Boolean) = peerVoteResults.put(id, id)
 
   override def toString() = id.toString
+
+  def close {
+    isFinished = true
+  }
 }

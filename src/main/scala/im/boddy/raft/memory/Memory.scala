@@ -1,6 +1,8 @@
 package im.boddy.raft.memory
 
 
+import java.util.concurrent
+
 import im.boddy.raft._
 import java.util.concurrent._
 
@@ -26,7 +28,7 @@ class AsyncBroker[T](config: Config, timeout: Duration) {
 
       override def send(pdu: AddressedPDU): Unit = offer(pdu)
 
-      override def receive(timeout: Duration): Future[AddressedPDU] = poll(id, timeout)
+      override def receive(timeout: Duration): AddressedPDU = poll(id, timeout)
     }
 
     msgs.put(peer.id, new ArrayBlockingQueue[AddressedPDU](1))
@@ -39,14 +41,10 @@ class AsyncBroker[T](config: Config, timeout: Duration) {
     maybe.get.offer(pdu, timeout.count, timeout.unit)
   }
 
-  def poll(id: Id, timeout: Duration): Future[AddressedPDU] = {
+  def poll(id: Id, timeout: Duration): AddressedPDU = {
     val maybe: Option[BlockingQueue[AddressedPDU]] = msgs.get(id)
     if (maybe.isEmpty) throw new IllegalStateException("No peer with id "+ id)
-
-    val callable: Callable[AddressedPDU] = new  Callable[AddressedPDU] {
-      override def call(): AddressedPDU = maybe.get.poll(timeout.count, timeout.unit)
-    }
-    threadPool.submit(callable)
+    maybe.get.poll(timeout.count, timeout.unit)
   }
   
   def shutdown {
