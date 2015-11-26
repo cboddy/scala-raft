@@ -16,10 +16,6 @@ package object raft {
   val NO_TERM : Term =  -1
   val NO_PING_SENT: Long = 0
 
-  trait Logging {
-    def log = Logger.getGlobal
-  }
-
   def now = System.currentTimeMillis()
 
   case class Duration(count: Int, unit: TimeUnit) extends Ordered[Duration] {

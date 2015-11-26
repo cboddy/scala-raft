@@ -1,20 +1,18 @@
 package im.boddy.raft.memory
 
-
-import java.util.concurrent
+import java.util.concurrent._
 
 import im.boddy.raft._
-import java.util.concurrent._
 
 import scala.collection.mutable
 
 import scala.collection.mutable.ArrayBuffer
 
-class AsyncBroker[T](config: Config, timeout: Duration) {
+class AsyncBroker[T] (config: Config, timeout: Duration) extends Logging {
 
   private val msgs = new mutable.HashMap[Id, BlockingQueue[AddressedPDU]]()
-  
-  private val threadPool = Executors.newCachedThreadPool()
+
+  private val threadPool = Executors.newFixedThreadPool(config.peers.size)
 
   def addPeer(id: Id, timeout: Duration) : Peer[T] = {
 
@@ -28,10 +26,15 @@ class AsyncBroker[T](config: Config, timeout: Duration) {
 
       override def send(pdu: AddressedPDU): Unit = offer(pdu)
 
-      override def receive(timeout: Duration): AddressedPDU = poll(id, timeout)
+      override def receive(timeout: Duration): AddressedPDU = {
+        val head = poll(id, timeout)
+        if (head == null) throw new TimeoutException();
+        head
+      }
     }
 
     msgs.put(peer.id, new ArrayBlockingQueue[AddressedPDU](1))
+    threadPool.submit(peer)
     return peer
   }
 
@@ -44,6 +47,8 @@ class AsyncBroker[T](config: Config, timeout: Duration) {
   def poll(id: Id, timeout: Duration): AddressedPDU = {
     val maybe: Option[BlockingQueue[AddressedPDU]] = msgs.get(id)
     if (maybe.isEmpty) throw new IllegalStateException("No peer with id "+ id)
+
+    log.info("polling " + id +" with timeout "+ timeout)
     maybe.get.poll(timeout.count, timeout.unit)
   }
   

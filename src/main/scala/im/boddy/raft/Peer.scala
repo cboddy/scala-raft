@@ -82,6 +82,8 @@ abstract class Peer[T](val id: Id,
   private var state = State.CANDIDATE
 
   def run(): Unit = {
+    log.info("peer "+ toString() +" starting")
+
     while (! isFinished) {
 
       val timeout = if (state == State.LEADER) leaderTimeout else electionTimeout
@@ -149,8 +151,8 @@ abstract class Peer[T](val id: Id,
       case _ if lastAppliedIndex > pdu.lastLogIndex || lastAppliedTerm > pdu.lastLogTerm => RequestVoteState.CANDIDATE_MISSING_PREVIOUS_ENTRY
       case _ if pdu.term == currentTerm => {
         votedFor match  {
-          case NOT_VOTED => follow()
-          case source => follow()
+          case x if x == NOT_VOTED => follow()
+          case x if x == source => follow()
           case _ => RequestVoteState.VOTE_ALREADY_CAST
         }
       }
@@ -174,7 +176,7 @@ abstract class Peer[T](val id: Id,
 
   def ascendToLeader {
 
-    log.fine("peer " + this.toString() + " ascending to leader")
+    log.info("peer " + this.toString() + " ascending to leader")
 
     state = State.LEADER
     leader = id
@@ -184,7 +186,7 @@ abstract class Peer[T](val id: Id,
 
   def descendToFollower(withTerm: Term, withLeader: Id) {
 
-    log.fine("peer " + this.toString() + " descending to follower of leader " + withLeader + " with  term " + withTerm)
+    log.info("peer " + this.toString() + " descending to follower of leader " + withLeader + " with  term " + withTerm)
 
     state = State.FOLLOWER
     leader = withLeader
@@ -193,7 +195,7 @@ abstract class Peer[T](val id: Id,
 
   def callElection {
 
-    log.fine("peer " + this.toString() + " called election for term " + currentTerm)
+    log.info("peer " + this.toString() + " called election for term " + currentTerm)
 
     if (shouldIncrementTerm) {
       currentTerm += 1
