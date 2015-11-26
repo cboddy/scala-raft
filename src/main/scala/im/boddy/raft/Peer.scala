@@ -51,7 +51,7 @@ case object State extends Enumeration {
 
 trait Broker {
   def send(pdu: AddressedPDU)
-  def receive(timeout: Duration) : AddressedPDU
+  def receive(timeout: Duration) : Option[AddressedPDU]
 }
 
 abstract class Peer[T](val id: Id,
@@ -64,9 +64,7 @@ abstract class Peer[T](val id: Id,
 
   private val leaderState = new LeaderState(this)
 
-
   private val peerVoteResults = collection.mutable.Map() ++ config.peers.map(_ -> NOT_VOTED).toMap
-  private val catcher: Catch[AddressedPDU] = catching(classOf[TimeoutException])
 
   private var currentTerm: Term = NO_TERM
   private var votingTerm: Term = NO_TERM
@@ -88,7 +86,7 @@ abstract class Peer[T](val id: Id,
 
       val timeout = if (state == State.LEADER) leaderTimeout else electionTimeout
 
-      val opt: Option[AddressedPDU] = catcher.opt(receive(timeout))
+      val opt: Option[AddressedPDU] = receive(timeout)
 
       if (opt.nonEmpty) {
         val received = opt.get

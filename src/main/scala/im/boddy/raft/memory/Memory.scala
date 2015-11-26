@@ -26,10 +26,9 @@ class AsyncBroker[T] (config: Config, timeout: Duration) extends Logging {
 
       override def send(pdu: AddressedPDU): Unit = offer(pdu)
 
-      override def receive(timeout: Duration): AddressedPDU = {
+      override def receive(timeout: Duration): Option[AddressedPDU] = {
         val head = poll(id, timeout)
-        if (head == null) throw new TimeoutException();
-        head
+        Option(head)
       }
     }
 
