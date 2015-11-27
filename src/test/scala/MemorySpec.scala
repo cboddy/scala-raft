@@ -3,18 +3,15 @@ package im.boddy.raft
 import java.util.concurrent.{ArrayBlockingQueue, TimeUnit}
 import java.util.logging.Level
 
-import im.boddy.raft._
 import org.specs2.mutable._
-import org.specs2.specification.AfterAll
 
 class MemorySpec extends Specification with Logging {
-
 
   class TestSystem[T](config: Config, timeout: Duration) {
 
     val repo = new BufferLogRepository[T]()
-    val toPeerMsgs = new ArrayBlockingQueue[AddressedPDU](1)
-    val fromPeerMsgs = new ArrayBlockingQueue[AddressedPDU](1)
+    val toPeerMsgs = new ArrayBlockingQueue[AddressedPDU](16)
+    val fromPeerMsgs = new ArrayBlockingQueue[AddressedPDU](16)
 
     trait TestRepo extends LogRepository[T] {
       override def getEntries(startIndex: Index, endIndex: Index)  = repo.getEntries(startIndex, endIndex)
@@ -31,19 +28,20 @@ class MemorySpec extends Specification with Logging {
     val peer = new Peer[T](peerId, config, timeout) with TestRepo with TestBroker
   }
 
-  def testSystem = new TestSystem[Int](Config(Seq(1,2,3)), Duration(1, TimeUnit.SECONDS))
-
   log.setLevel(Level.FINEST)
 
+  def testSystem(pdus: AddressedPDU*) = {
+    val system = new TestSystem[Int](Config(Seq(1,2,3)), Duration(1, TimeUnit.SECONDS))
+    pdus.foreach(system.toPeerMsgs.offer(_))
+    system
+  }
 
   "Memory Test" should {
 
-    val system = testSystem
-    val (peer, out, in, timeout)  = (system.peer, system.toPeerMsgs, system.fromPeerMsgs, system.peer.electionTimeout)
-
     "handle invalid PDU" in {
-      out.add(AddressedPDU(-1, 1, RequestVote(-1, 2, 0, 0)))
-      peer.tick
+      val system = testSystem(AddressedPDU(-1, 1, RequestVote(-1, 2, 0, 0)))
+      system.peer.tick
+      val in = system.fromPeerMsgs
       in.size() mustEqual(1)
       val response : AddressedPDU = in.take()
       val responsePdu: PDU = response.pdu
@@ -51,6 +49,11 @@ class MemorySpec extends Specification with Logging {
       val invalidPdu: InvalidPDU = responsePdu.asInstanceOf[InvalidPDU]
       invalidPdu.state mustEqual(InvalidPduState.INVALID_ID)
       invalidPdu.term mustEqual(NO_TERM)
+    }
+
+    "reject vote with invalid term" in {
+      val system = testSystem(AddressedPDU(-1, 1, RequestVote(-1, 2, 0, 0)))
+      ok
     }
   }
 }
