@@ -69,18 +69,18 @@ abstract class Peer[T](val id: Id,
 
   private var state = State.CANDIDATE
 
-  def run(): Unit = {
-    log.info("peer "+ toString() +" starting")
+  def tick : Unit = {
+    val timeout = if (state == State.LEADER) leaderTimeout else electionTimeout
 
-    while (! isFinished) {
+    val opt: Option[AddressedPDU] = receive(timeout)
+    if (opt.nonEmpty) {
+      val received = opt.get
+      val source = received.source
+      val pdu = received.pdu
 
-      val timeout = if (state == State.LEADER) leaderTimeout else electionTimeout
-
-      val opt: Option[AddressedPDU] = receive(timeout)
-
-      if (opt.nonEmpty) {
-        val received = opt.get
-        val pdu = received.pdu
+      if (! config.peers.contains(pdu))
+        send(addressedPDU(InvalidPDU(InvalidPduState.INVALID_ID, currentTerm), source))
+      else {
         val handler: (AddressedPDU => Unit) = pdu match {
           case _: AppendEntries[T] => handleAppend
           case _: AppendEntriesAck => handleAppendAck
@@ -90,10 +90,16 @@ abstract class Peer[T](val id: Id,
         }
         handler(received)
       }
-      else if (state != State.LEADER) callElection
-
-      if (state == State.LEADER) leaderPing
     }
+    else if (state != State.LEADER) callElection
+
+    if (state == State.LEADER) leaderPing
+  }
+
+  def run(): Unit = {
+    log.info("peer "+ toString() +" starting")
+
+    while (! isFinished) tick
   }
 
   def addressedPDU(pdu: PDU, target: Id) : AddressedPDU = AddressedPDU(id, target, pdu)

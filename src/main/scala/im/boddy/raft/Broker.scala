@@ -1,6 +1,6 @@
 package im.boddy.raft
 
-import java.util.concurrent.{TimeUnit, ArrayBlockingQueue, Executors, BlockingQueue}
+import java.util.concurrent._
 
 import scala.collection.mutable
 

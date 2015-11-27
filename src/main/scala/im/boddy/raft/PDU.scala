@@ -39,3 +39,9 @@ case object RequestVoteState extends Enumeration {
 case class RequestVoteAck(term: Term, state: RequestVoteState.Value) extends PDU(term) {
   def success = state == RequestVoteState.SUCCESS
 }
+
+case object InvalidPduState extends Enumeration {
+  val INVALID_ID, INVALID_SOURCE = Value
+}
+
+case class InvalidPDU(state: InvalidPduState.Value, term: Term) extends PDU(term)
