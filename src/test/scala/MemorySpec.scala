@@ -7,7 +7,7 @@ import org.specs2.mutable._
 
 class MemorySpec extends Specification with Logging {
 
-  class TestSystem[T](config: Config, timeout: Duration) {
+  class TestSystem[T](val config: Config, val timeout: Duration) {
 
     val repo = new BufferLogRepository[T]()
     val toPeerMsgs = new ArrayBlockingQueue[AddressedPDU](16)
@@ -18,7 +18,7 @@ class MemorySpec extends Specification with Logging {
       override def putEntries(entries: Seq[LogEntry[T]]) {repo.putEntries(entries)}
     }
 
-    trait TestBroker extends Broker{
+    trait TestBroker extends Broker {
       def send(pdu: AddressedPDU) = fromPeerMsgs.add(pdu)
       def receive(timeout: Duration) : Option[AddressedPDU] = Option(toPeerMsgs.poll(timeout.count, timeout.unit))
     }
@@ -33,27 +33,142 @@ class MemorySpec extends Specification with Logging {
   def testSystem(pdus: AddressedPDU*) = {
     val system = new TestSystem[Int](Config(Seq(1,2,3)), Duration(1, TimeUnit.SECONDS))
     pdus.foreach(system.toPeerMsgs.offer(_))
-    system
+    new Tuple4[ArrayBlockingQueue[AddressedPDU], ArrayBlockingQueue[AddressedPDU], Peer[Int], TestSystem[Int]](system.toPeerMsgs, system.fromPeerMsgs, system.peer, system)
   }
 
-  "Memory Test" should {
+  "Peer" should {
 
     "handle invalid PDU" in {
-      val system = testSystem(AddressedPDU(-1, 1, RequestVote(-1, 2, 0, 0)))
-      system.peer.tick
-      val in = system.fromPeerMsgs
+
+      val (out, in, peer, system) = testSystem(AddressedPDU(-1, 1, RequestVote(-1, 2, 0, -1)))
+      peer.tick
       in.size() mustEqual(1)
       val response : AddressedPDU = in.take()
       val responsePdu: PDU = response.pdu
-      responsePdu.isInstanceOf[InvalidPDU] mustEqual(true)
+      responsePdu.isInstanceOf[InvalidPDU] mustEqual true
       val invalidPdu: InvalidPDU = responsePdu.asInstanceOf[InvalidPDU]
       invalidPdu.state mustEqual(InvalidPduState.INVALID_ID)
       invalidPdu.term mustEqual(NO_TERM)
     }
 
     "reject vote with invalid term" in {
-      val system = testSystem(AddressedPDU(-1, 1, RequestVote(-1, 2, 0, 0)))
+      val (out, in, peer, system) = testSystem()
+      peer.currentTerm = 3
+
+      out.put(AddressedPDU(2, 1, RequestVote(2, 2, 0, 0)))
+      peer.tick
+      in.size() mustEqual(1)
+      val response = in.take()
+      response.pdu.isInstanceOf[RequestVoteAck] mustEqual true
+      val ack = response.pdu.asInstanceOf[RequestVoteAck]
+      ack.state mustEqual RequestVoteState.TERM_NOT_CURRENT
+    }
+
+    "reject vote with not up to date previous index/term" in {
+      val (out, in, peer, system) = testSystem()
+      peer.lastAppliedIndex = 10
+      peer.lastAppliedTerm = 3
+
+      for (pdu <- Seq(RequestVote(2, 2, 10, 2), RequestVote(3, 2, 9, 3))) {
+        val addressed = AddressedPDU(2, 1, pdu)
+        out.put(addressed)
+        peer.tick
+        in.size() mustEqual(1)
+        val response = in.take()
+        response.pdu.isInstanceOf[RequestVoteAck] mustEqual true
+        val ack = response.pdu.asInstanceOf[RequestVoteAck]
+        ack.state mustEqual RequestVoteState.CANDIDATE_MISSING_PREVIOUS_ENTRY
+      }
       ok
     }
+
+    "grant vote to valid request-for-vote" in {
+      val (out, in, peer, system) = testSystem()
+      peer.currentTerm = 3
+      peer.lastAppliedIndex = 10
+      peer.lastAppliedTerm = 3
+      for (pdu <- Seq(RequestVote(3, 2, 10, 3), RequestVote(4, 2, 16, 4))) {
+        val addressed = AddressedPDU(2, 1, pdu)
+        out.put(addressed)
+        peer.tick
+        in.size() mustEqual(1)
+        val response = in.take()
+
+        response.pdu.isInstanceOf[RequestVoteAck] mustEqual true
+        val ack = response.pdu.asInstanceOf[RequestVoteAck]
+        ack.state mustEqual RequestVoteState.SUCCESS
+        peer.currentTerm mustEqual pdu.term
+        peer.leader = addressed.source
+      }
+      ok
+    }
+
+    "reject vote request if vote already cast and grant vote with term and index in advance of its own" in {
+      val (out, in, peer, system) = testSystem()
+      peer.currentTerm = 3
+      peer.lastAppliedIndex = 10
+      peer.lastAppliedTerm = 3
+      peer.votedFor = 3
+      peer.leader = 3
+
+
+      for ((pdu, state) <- Seq(
+        RequestVote(3, 2, 10, 3) -> RequestVoteState.VOTE_ALREADY_CAST,
+        RequestVote(4, 2, 16, 4) -> RequestVoteState.SUCCESS)
+      ) {
+        val addressed = AddressedPDU(2, 1, pdu)
+        out.put(addressed)
+        peer.tick
+        in.size() mustEqual(1)
+        val response = in.take()
+        response.pdu.isInstanceOf[RequestVoteAck] mustEqual true
+        val ack = response.pdu.asInstanceOf[RequestVoteAck]
+        ack.state mustEqual state
+      }
+      ok
+    }
+
+
+    "call election after timeout" in {
+      val (out, in, peer, system) = testSystem()
+      peer.lastAppliedIndex = 10
+      peer.tick
+
+      peer.state mustEqual State.CANDIDATE
+      peer.currentTerm mustNotEqual NO_TERM
+
+      in.size mustEqual system.config.peers.size -1
+
+      val response = in.take()
+      response.pdu.isInstanceOf[RequestVote] mustEqual true
+
+      val req = response.pdu.asInstanceOf[RequestVote]
+
+      req.candidate mustEqual peer.id
+      req.lastLogIndex mustEqual peer.lastAppliedIndex
+      req.lastLogTerm mustEqual peer.lastAppliedTerm
+      req.term mustEqual peer.currentTerm
+    }
+
+    "reject append-entries if term is not up-to-date" in {
+      ???
+      ok
+    }
+
+    "reject append-entries if previous-index and previous-term don't match it's own" in {
+      ???
+      ok
+    }
+
+    "overwrite conflicting un-committed log entries" in {
+      ???
+      ok
+    }
+
+    "update state after received append-ack" in {
+      ???
+      ok
+    }
+
   }
 }

@@ -17,7 +17,9 @@ case class AppendEntries[T](term: Term,
 case class RequestVote(term: Term,
                        candidate: Id,
                        lastLogIndex: Index,
-                       lastLogTerm: Index) extends PDU(term)
+                       lastLogTerm: Index) extends PDU(term) {
+  if (term < lastLogTerm) throw new IllegalStateException()
+}
 
 
 object AppendState extends Enumeration {

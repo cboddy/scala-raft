@@ -52,24 +52,24 @@ abstract class Peer[T](val id: Id,
 
   val leaderTimeout = electionTimeout.copy(count = electionTimeout.count/2)
 
-  private val leaderState = new LeaderState(this)
+  private[raft] val leaderState = new LeaderState(this)
 
-  private val peerVoteResults = collection.mutable.Map() ++ config.peers.map(_ -> NOT_VOTED).toMap
+  private[raft] val peerVoteResults = collection.mutable.Map() ++ config.peers.map(_ -> NOT_VOTED).toMap
 
-  private var currentTerm: Term = NO_TERM
-  private var votingTerm: Term = NO_TERM
-  private var lastCommittedIndex: Index = NO_TERM
-  private var lastAppliedIndex : Index  = NO_TERM
-  private var lastAppliedTerm : Term  = NO_TERM
+  private[raft] var currentTerm: Term = NO_TERM
+  private[raft] var votingTerm: Term = NO_TERM
+  private[raft] var lastCommittedIndex: Index = NO_TERM
+  private[raft] var lastAppliedIndex : Index  = NO_TERM
+  private[raft] var lastAppliedTerm : Term  = NO_TERM
 
-  private var leader : Id = NO_LEADER
-  private var votedFor : Id = NOT_VOTED
+  private[raft] var leader : Id = NO_LEADER
+  private[raft] var votedFor : Id = NOT_VOTED
 
   @volatile var isFinished = false
 
-  private var state = State.CANDIDATE
+  private[raft] var state = State.CANDIDATE
 
-  def tick : Unit = {
+  private[raft] def tick : Unit = {
     val timeout = if (state == State.LEADER) leaderTimeout else electionTimeout
 
     val opt: Option[AddressedPDU] = receive(timeout)
@@ -78,7 +78,7 @@ abstract class Peer[T](val id: Id,
       val source = received.source
       val pdu = received.pdu
 
-      if (! config.peers.contains(pdu))
+      if (! config.peers.contains(source))
         send(addressedPDU(InvalidPDU(InvalidPduState.INVALID_ID, currentTerm), source))
       else {
         val handler: (AddressedPDU => Unit) = pdu match {
