@@ -54,7 +54,7 @@ abstract class Peer[T](val id: Id,
 
   private[raft] val leaderState = new LeaderState(this)
 
-  private[raft] val peerVoteResults = collection.mutable.Map() ++ config.peers.map(_ -> NOT_VOTED).toMap
+  private[raft] val peerVoteResults : collection.mutable.Map[Id, Boolean] = collection.mutable.Map()
 
   private[raft] var commitIndex: Index = NO_TERM
   private[raft] var lastAppliedIndex : Index  = NO_TERM
@@ -120,7 +120,7 @@ abstract class Peer[T](val id: Id,
       case _ => {
         if (pdu.entries.nonEmpty) {
           putEntries(pdu.entries)
-          lastAppliedIndex = pdu.entries.last.index
+          lastAppliedIndex = pdu.entries.last.id.index
           lastAppliedTerm = pdu.term
           commitIndex = Math.max(commitIndex, pdu.committedIndex)
         }
@@ -161,20 +161,39 @@ abstract class Peer[T](val id: Id,
     val voteState: RequestVoteState.Value = pdu match {
 
       case _ if pdu.term < currentTerm => RequestVoteState.TERM_NOT_CURRENT
-      case _ if lastAppliedIndex > pdu.lastLogIndex || lastAppliedTerm > pdu.lastLogTerm => RequestVoteState.CANDIDATE_MISSING_PREVIOUS_ENTRY
       case _ if pdu.term == currentTerm => votedFor match {
-          case x if x == NOT_VOTED => follow()
-          case x if x == source => follow()
+          case x if x == NOT_VOTED => {
+            votedFor = source
+            RequestVoteState.SUCCESS
+          }
+          case x if x == source => {
+            RequestVoteState.SUCCESS
+          }
           case _ => RequestVoteState.VOTE_ALREADY_CAST
       }
-      case _ => follow()
+      case _ => {
+        votedFor = source
+        RequestVoteState.SUCCESS
+      }
     }
 
-    send(addressedPDU(RequestVoteAck(currentTerm, voteState), source))
+    send(addressedPDU(RequestVoteAck(currentTerm, voteState, leader), source))
   }
 
   def handleRequestAck(ack: AddressedPDU) = {
     val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[RequestVoteAck])
+    pdu.state match {
+      case RequestVoteState.TERM_NOT_CURRENT => {
+        descendToFollower(pdu.term, pdu.leader)
+      }
+      case RequestVoteState.VOTE_ALREADY_CAST => {
+        addVote(source, false)
+      }
+      case RequestVoteState.SUCCESS => {
+        addVote(source, true)
+      }
+    }
+
   }
 
   def broadcast(pdu: PDU) = config.peers
@@ -236,10 +255,10 @@ abstract class Peer[T](val id: Id,
 
   def resetVotes: Unit = {
     votingTerm = currentTerm
-    config.peers.foreach(peerVoteResults.put(_, NOT_VOTED))
+    peerVoteResults.clear()
   }
 
-  def addVote(id: Id, vote: Boolean) = peerVoteResults.put(id, id)
+  def addVote(id: Id, hasVote: Boolean) = peerVoteResults.put(id, hasVote)
 
   override def toString() = id.toString
 

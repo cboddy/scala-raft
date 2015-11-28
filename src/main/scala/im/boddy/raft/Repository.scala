@@ -2,14 +2,15 @@ package im.boddy.raft
 
 import scala.collection.mutable.ArrayBuffer
 
-case class LogEntry[T](index: Index, value : T)
+case class EntryKey(index: Index, term: Term)
+case class LogEntry[T](id: EntryKey, value : T)
 
 trait LogRepository[T] {
 
-  def getEntries(startIndex: Index, endIndex: Index) : Seq[LogEntry[T]]
-  def getEntry(index: Index) : LogEntry[T] = getEntries(index, index+1)(0)
+  def getEntries(entries: Seq[(EntryKey)]) : Seq[LogEntry[T]]
+  def getEntry(entryKey: EntryKey) : LogEntry[T] = getEntries(Seq((entryKey)))(0)
 
-  def containsEntry(index: Index) : Boolean
+  def containsEntry(entryKey: EntryKey) : Boolean
 
   def putEntries(entries: Seq[LogEntry[T]]) : Unit
   def putEntry(entry: LogEntry[T]) = putEntries(Seq(entry))
@@ -18,20 +19,34 @@ trait LogRepository[T] {
 
 class BufferLogRepository[T] extends LogRepository[T] {
 
-  val log = new ArrayBuffer[LogEntry[T]]()
+  private[raft] var log = new ArrayBuffer[Option[LogEntry[T]]]()
 
-  override def getEntries(startIndex: Index, endIndex: Index): Seq[LogEntry[T]] = {
-    val length: Int = log.size
-    if (length < endIndex) throw new IllegalStateException("Requested index "+ endIndex +" past limit "+ length)
-    log.slice(startIndex.toInt, endIndex.toInt)
+  override def getEntries(entries: Seq[(EntryKey)]): Seq[LogEntry[T]] = {
+    val last = entries.last
+    if (!containsEntry(entries.last))
+      throw new IllegalStateException()
+    entries.map(e => log(e.index.toInt).get)
   }
 
-  override def putEntries(entries: Seq[LogEntry[T]]) = log ++= entries
+  override def putEntries(entries: Seq[LogEntry[T]]) = entries.foreach(e => {
 
-  override def containsEntry(index: Index) : Boolean = try {
-    getEntry(index)
-    true
-  } catch {
-    case _ : Throwable => false
+    entries.sortBy(_.id.index).foreach(e => {
+
+      val index : Int = e.id.index.toInt
+      val delta = log.size - index
+
+      delta match {
+        case x if x < 0 => log = log.slice(0, index)
+        case x if x > 0 => log ++ (0 to delta).map(e => None)
+      }
+      log += Some(e)
+    })
+  })
+
+  override def containsEntry(key: EntryKey): Boolean = {
+    val pos = key.index.toInt
+    if (log.size <= pos) false
+    val opt = log(pos)
+    opt.nonEmpty && opt.get.id.term == key.term
   }
 }

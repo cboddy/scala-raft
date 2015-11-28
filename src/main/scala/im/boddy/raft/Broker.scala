@@ -23,11 +23,11 @@ class AsyncBroker[T] (config: Config, timeout: Duration) extends Logging {
 
     val peer = new Peer[T](id, config, timeout) {
 
-      override def getEntries(startIndex: Index, endIndex: Index)  = repo.getEntries(startIndex, endIndex)
+      override def getEntries(entries: Seq[EntryKey])  = repo.getEntries(entries)
 
       override def putEntries(entries: Seq[LogEntry[T]]) = repo.putEntries(entries)
 
-      override def containsEntry(index: Index) = repo.containsEntry(index)
+      override def containsEntry(entryKey: EntryKey) = repo.containsEntry(entryKey)
 
       override def send(pdu: AddressedPDU): Unit = offer(pdu)
 

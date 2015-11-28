@@ -11,7 +11,7 @@ case class AppendEntries[T](term: Term,
                             entries : Seq[LogEntry[T]],
                             leaderCommit: Index
                            ) extends PDU(term) {
-  lazy val committedIndex = Math.min(leaderCommit, entries.last.index)
+  lazy val committedIndex = Math.min(leaderCommit, entries.last.id.index)
 }
 
 case class RequestVote(term: Term,
@@ -37,10 +37,13 @@ case class AppendEntriesAck(term: Term,
 
 
 case object RequestVoteState extends Enumeration {
-  val TERM_NOT_CURRENT, CANDIDATE_MISSING_PREVIOUS_ENTRY, VOTE_ALREADY_CAST, SUCCESS = Value
+  val TERM_NOT_CURRENT, VOTE_ALREADY_CAST, SUCCESS = Value
 }
 
-case class RequestVoteAck(term: Term, state: RequestVoteState.Value) extends PDU(term) {
+case class RequestVoteAck(term: Term, state: RequestVoteState.Value, leader: Id) extends PDU(term) {
+  if (leader != NO_LEADER && state == RequestVoteState.TERM_NOT_CURRENT)
+    throw new IllegalStateException()
+
   def success = state == RequestVoteState.SUCCESS
 }
 
