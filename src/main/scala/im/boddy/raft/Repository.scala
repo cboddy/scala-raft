@@ -9,6 +9,8 @@ trait LogRepository[T] {
   def getEntries(startIndex: Index, endIndex: Index) : Seq[LogEntry[T]]
   def getEntry(index: Index) : LogEntry[T] = getEntries(index, index+1)(0)
 
+  def containsEntry(index: Index) : Boolean
+
   def putEntries(entries: Seq[LogEntry[T]]) : Unit
   def putEntry(entry: LogEntry[T]) = putEntries(Seq(entry))
 
@@ -25,4 +27,11 @@ class BufferLogRepository[T] extends LogRepository[T] {
   }
 
   override def putEntries(entries: Seq[LogEntry[T]]) = log ++= entries
+
+  override def containsEntry(index: Index) : Boolean = try {
+    getEntry(index)
+    true
+  } catch {
+    case _ => false
+  }
 }

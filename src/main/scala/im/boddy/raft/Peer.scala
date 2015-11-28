@@ -50,16 +50,17 @@ abstract class Peer[T](val id: Id,
 
   if (! config.peers.contains(id)) throw new IllegalStateException("peer "+ id + " not in config " + config)
 
-  val leaderTimeout = electionTimeout.copy(count = electionTimeout.count/2)
+  private[raft] val leaderTimeout = electionTimeout.copy(count = electionTimeout.count/2)
 
   private[raft] val leaderState = new LeaderState(this)
 
   private[raft] val peerVoteResults = collection.mutable.Map() ++ config.peers.map(_ -> NOT_VOTED).toMap
 
+  private[raft] var commitIndex: Index = NO_TERM
+  private[raft] var lastAppliedIndex : Index  = NO_TERM
+
   private[raft] var currentTerm: Term = NO_TERM
   private[raft] var votingTerm: Term = NO_TERM
-  private[raft] var lastCommittedIndex: Index = NO_TERM
-  private[raft] var lastAppliedIndex : Index  = NO_TERM
   private[raft] var lastAppliedTerm : Term  = NO_TERM
 
   private[raft] var leader : Id = NO_LEADER
@@ -69,7 +70,7 @@ abstract class Peer[T](val id: Id,
 
   private[raft] var state = State.CANDIDATE
 
-  private[raft] def tick : Unit = {
+  private[raft] def peerTick : Unit = {
     val timeout = if (state == State.LEADER) leaderTimeout else electionTimeout
 
     val opt: Option[AddressedPDU] = receive(timeout)
@@ -93,13 +94,13 @@ abstract class Peer[T](val id: Id,
     }
     else if (state != State.LEADER) callElection
 
-    if (state == State.LEADER) leaderPing
+    if (state == State.LEADER) leaderTick
   }
 
   def run(): Unit = {
     log.info("peer "+ toString() +" starting")
 
-    while (! isFinished) tick
+    while (! isFinished) peerTick
   }
 
   def addressedPDU(pdu: PDU, target: Id) : AddressedPDU = AddressedPDU(id, target, pdu)
@@ -111,23 +112,40 @@ abstract class Peer[T](val id: Id,
     val (source, pdu) = (appendEntries.source, appendEntries.pdu.asInstanceOf[AppendEntries[T]])
 
     val appendState: AppendState.Value = pdu match {
+
+      case _ if lastAppliedIndex > pdu.previousIndex || lastAppliedTerm > pdu.previousTerm => AppendState.REQUEST_MISSING_ENTRIES
+      case _ if lastAppliedIndex < pdu.previousIndex || lastAppliedTerm < pdu.previousTerm => AppendState.PEER_MISSING_ENTRIES
       case _ if pdu.term < currentTerm => AppendState.TERM_NOT_CURRENT
-      case _ if lastAppliedIndex != pdu.previousIndex || lastAppliedTerm != pdu.previousTerm => AppendState.MISSING_PREVIOUS_ENTRY
       case _ if source != leader => throw new IllegalStateException()
       case _ => {
         if (pdu.entries.nonEmpty) {
           putEntries(pdu.entries)
-          lastCommittedIndex = Math.max(lastCommittedIndex, pdu.committedIndex)
+          lastAppliedIndex = pdu.entries.last.index
+          lastAppliedTerm = pdu.term
+          commitIndex = Math.max(commitIndex, pdu.committedIndex)
         }
         AppendState.SUCCESS
       }
     }
 
-    send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastAppliedIndex, lastAppliedTerm), source))
+    send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastAppliedIndex, lastAppliedTerm, commitIndex), source))
   }
 
   def handleAppendAck(ack : AddressedPDU) = {
     val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[AppendEntriesAck])
+    pdu.state match {
+      case AppendState.TERM_NOT_CURRENT =>
+      case AppendState.REQUEST_MISSING_ENTRIES => {
+
+      }
+      case AppendState.PEER_MISSING_ENTRIES => {
+
+      }
+      case AppendState.SUCCESS => {
+        val index : Index = leaderState.matchIndex.get(source).get
+
+      }
+    }
 
   }
 
@@ -170,7 +188,10 @@ abstract class Peer[T](val id: Id,
     state = State.LEADER
     leader = id
     leaderState.reset
-    config.peers.filterNot(_ == id).foreach(leaderState.matchIndex.put(_, lastCommittedIndex))
+    config.peers.filterNot(_ == id).foreach(id => {
+      leaderState.matchIndex.put(id, 0)
+      leaderState.nextIndex.put(id, lastAppliedIndex)
+    })
   }
 
   def descendToFollower(withTerm: Term, withLeader: Id) {
@@ -197,12 +218,12 @@ abstract class Peer[T](val id: Id,
     broadcast(pdu)
   }
 
-  def leaderPing {
+  def leaderTick {
     val currentTime = now
 
     if (leaderState.updatePing(currentTime)) {
       leaderState.lastTimePing = currentTime
-      broadcast(AppendEntries(currentTerm, leader, lastAppliedIndex, lastAppliedTerm, Seq(), lastCommittedIndex))
+      broadcast(AppendEntries(currentTerm, leader, lastAppliedIndex, lastAppliedTerm, Seq(), commitIndex))
     }
   }
 
@@ -221,7 +242,5 @@ abstract class Peer[T](val id: Id,
 
   override def toString() = id.toString
 
-  def close {
-    isFinished = true
-  }
+  def close = isFinished = true
 }

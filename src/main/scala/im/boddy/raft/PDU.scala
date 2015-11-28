@@ -10,7 +10,7 @@ case class AppendEntries[T](term: Term,
                             previousTerm: Term,
                             entries : Seq[LogEntry[T]],
                             leaderCommit: Index
-                             ) extends PDU(term) {
+                           ) extends PDU(term) {
   lazy val committedIndex = Math.min(leaderCommit, entries.last.index)
 }
 
@@ -23,13 +23,14 @@ case class RequestVote(term: Term,
 
 
 object AppendState extends Enumeration {
-  val TERM_NOT_CURRENT, MISSING_PREVIOUS_ENTRY, SUCCESS = Value
+  val TERM_NOT_CURRENT, REQUEST_MISSING_ENTRIES, PEER_MISSING_ENTRIES, SUCCESS = Value
 }
 
 case class AppendEntriesAck(term: Term,
                             state: AppendState.Value,
                             previousIndex:  Index,
-                            previousTerm: Term) extends PDU(term) {
+                            previousTerm: Term,
+                            commitIndex: Index) extends PDU(term) {
   def success = state == AppendState.SUCCESS
 }
 
