@@ -30,7 +30,8 @@ case class AppendEntriesAck(term: Term,
                             state: AppendState.Value,
                             previousIndex:  Index,
                             previousTerm: Term,
-                            commitIndex: Index) extends PDU(term) {
+                            commitIndex: Index,
+                            leader: Id) extends PDU(term) {
   def success = state == AppendState.SUCCESS
 }
 

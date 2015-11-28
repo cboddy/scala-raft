@@ -128,18 +128,19 @@ abstract class Peer[T](val id: Id,
       }
     }
 
-    send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastAppliedIndex, lastAppliedTerm, commitIndex), source))
+    send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastAppliedIndex, lastAppliedTerm, commitIndex, leader), source))
   }
 
   def handleAppendAck(ack : AddressedPDU) = {
     val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[AppendEntriesAck])
     pdu.state match {
-      case AppendState.TERM_NOT_CURRENT =>
+      case AppendState.TERM_NOT_CURRENT => {}
       case AppendState.REQUEST_MISSING_ENTRIES => {
 
       }
       case AppendState.PEER_MISSING_ENTRIES => {
-
+        state = State.CANDIDATE
+        if (pdu.commitIndex > commitIndex) callElection
       }
       case AppendState.SUCCESS => {
         val index : Index = leaderState.matchIndex.get(source).get
