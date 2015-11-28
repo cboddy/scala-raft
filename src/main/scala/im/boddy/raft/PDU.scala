@@ -6,8 +6,7 @@ case class AddressedPDU(source: Id, target: Id, pdu: PDU)
 
 case class AppendEntries[T](term: Term,
                             leaderId: Id,
-                            previousIndex: Index,
-                            previousTerm: Term,
+                            previous: Entry,
                             entries : Seq[LogEntry[T]],
                             leaderCommit: Index
                            ) extends PDU(term) {
@@ -16,9 +15,8 @@ case class AppendEntries[T](term: Term,
 
 case class RequestVote(term: Term,
                        candidate: Id,
-                       lastLogIndex: Index,
-                       lastLogTerm: Index) extends PDU(term) {
-  if (term < lastLogTerm) throw new IllegalStateException()
+                       previous: Entry) extends PDU(term) {
+  if (term < previous.term) throw new IllegalStateException()
 }
 
 
@@ -28,8 +26,7 @@ object AppendState extends Enumeration {
 
 case class AppendEntriesAck(term: Term,
                             state: AppendState.Value,
-                            previousIndex:  Index,
-                            previousTerm: Term,
+                            previous: Entry,
                             commitIndex: Index,
                             leader: Id) extends PDU(term) {
   def success = state == AppendState.SUCCESS

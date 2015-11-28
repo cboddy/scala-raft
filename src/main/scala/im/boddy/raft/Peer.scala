@@ -5,23 +5,46 @@ import scala.collection.mutable
 class PendingRequest(val id: RequestId, val index: Index, var nSucceeded : Int, var nFailed: Int)
 
 class LeaderState[T](peer: Peer[T]) {
-  val nextIndex = new mutable.HashMap[Id, Index]()
+
   val matchIndex = new mutable.HashMap[Id, Index]()
   var lastTimePing = NO_PING_SENT
 
   private val pending = new mutable.HashMap[ClientId, PendingRequest]()
-  private val groupSize = peer.config.peers.length
 
   def reset = {
-    nextIndex.clear()
     matchIndex.clear()
+    peer.config.peers.foreach(matchIndex.put(_, peer.commitIndex))
   }
+
+  def updateCommitIndex: Unit = {
+    val sorted = matchIndex.values.toSeq.sorted
+    val majority: Index = sorted(peer.config.majority)
+    peer.commitIndex = Math.max(peer.commitIndex, majority)
+  }
+
+  def handleSuccess(id: Id, entry: Entry): Unit = {
+    val index = entry.index
+    matchIndex.put(id, index)
+    updateCommitIndex
+    if (index < peer.lastApplied.index) {
+      val entries = peer.getEntries(index +1, peer.lastApplied.index+1)
+      peer.send(peer.addressedPDU(AppendEntries(peer.currentTerm, peer.id, entry, entries, peer.commitIndex), id))
+    }
+  }
+
+  def handleMissing(id: Id, index: Index): Unit = {
+    if (matchIndex.get(id).get >= index) {
+      val previous: Entry = peer.getEntry(index - 1).id
+      peer.send(peer.addressedPDU(AppendEntries(peer.currentTerm, peer.id, previous, Seq(), peer.commitIndex), id))
+    }
+  }
+
 
   def requestHasMajority(client: ClientId, request: RequestId, index: Index) : Boolean = {
     val maybe = pending.get(client)
     if (maybe.isDefined) {
       val req = maybe.get
-      req.id == request && req.index == index && (req.nSucceeded >= groupSize/2 || req.nFailed >= groupSize/2)
+      req.id == request && req.index == index && (req.nSucceeded >= peer.config.majority || req.nFailed >= peer.config.majority)
     }
     else false
   }
@@ -57,11 +80,12 @@ abstract class Peer[T](val id: Id,
   private[raft] val peerVoteResults : collection.mutable.Map[Id, Boolean] = collection.mutable.Map()
 
   private[raft] var commitIndex: Index = NO_TERM
-  private[raft] var lastAppliedIndex : Index  = NO_TERM
+
 
   private[raft] var currentTerm: Term = NO_TERM
   private[raft] var votingTerm: Term = NO_TERM
-  private[raft] var lastAppliedTerm : Term  = NO_TERM
+  private[raft] var lastApplied : Entry  = Entry(NO_TERM, NO_TERM)
+
 
   private[raft] var leader : Id = NO_LEADER
   private[raft] var votedFor : Id = NOT_VOTED
@@ -113,66 +137,53 @@ abstract class Peer[T](val id: Id,
 
     val appendState: AppendState.Value = pdu match {
 
-      case _ if lastAppliedIndex > pdu.previousIndex || lastAppliedTerm > pdu.previousTerm => AppendState.REQUEST_MISSING_ENTRIES
-      case _ if lastAppliedIndex < pdu.previousIndex || lastAppliedTerm < pdu.previousTerm => AppendState.PEER_MISSING_ENTRIES
       case _ if pdu.term < currentTerm => AppendState.TERM_NOT_CURRENT
-      case _ if source != leader => throw new IllegalStateException()
+      case _ if lastApplied != pdu.previous => AppendState.REQUEST_MISSING_ENTRIES
       case _ => {
+        if (source != leader || state != State.FOLLOWER) {
+          descendToFollower(pdu.term, source)
+        }
+
         if (pdu.entries.nonEmpty) {
           putEntries(pdu.entries)
-          lastAppliedIndex = pdu.entries.last.id.index
-          lastAppliedTerm = pdu.term
+          lastApplied = pdu.entries.last.id
           commitIndex = Math.max(commitIndex, pdu.committedIndex)
         }
         AppendState.SUCCESS
       }
     }
 
-    send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastAppliedIndex, lastAppliedTerm, commitIndex, leader), source))
+    send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastApplied, commitIndex, leader), source))
   }
 
   def handleAppendAck(ack : AddressedPDU) = {
     val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[AppendEntriesAck])
     pdu.state match {
-      case AppendState.TERM_NOT_CURRENT => {}
-      case AppendState.REQUEST_MISSING_ENTRIES => {
-
-      }
-      case AppendState.PEER_MISSING_ENTRIES => {
-        state = State.CANDIDATE
-        if (pdu.commitIndex > commitIndex) callElection
-      }
-      case AppendState.SUCCESS => {
-        val index : Index = leaderState.matchIndex.get(source).get
-
-      }
+      case AppendState.TERM_NOT_CURRENT => descendToFollower(pdu.term, pdu.leader)
+      case AppendState.REQUEST_MISSING_ENTRIES => leaderState.handleMissing(source, pdu.previous.index)
+      case AppendState.SUCCESS => leaderState.handleSuccess(source, pdu.previous)
     }
-
   }
 
   def handleRequestVote(requestVote: AddressedPDU) = {
     val (source, pdu) = (requestVote.source, requestVote.pdu.asInstanceOf[RequestVote])
 
-    lazy val follow = () => {
-      descendToFollower(pdu.term, source)
-      RequestVoteState.SUCCESS
-    }
-
     val voteState: RequestVoteState.Value = pdu match {
 
       case _ if pdu.term < currentTerm => RequestVoteState.TERM_NOT_CURRENT
       case _ if pdu.term == currentTerm => votedFor match {
-          case x if x == NOT_VOTED => {
-            votedFor = source
-            RequestVoteState.SUCCESS
-          }
-          case x if x == source => {
-            RequestVoteState.SUCCESS
-          }
-          case _ => RequestVoteState.VOTE_ALREADY_CAST
+        case x if x == NOT_VOTED => {
+          votedFor = source
+          RequestVoteState.SUCCESS
+        }
+        case x if x == source => {
+          RequestVoteState.SUCCESS
+        }
+        case _ => RequestVoteState.VOTE_ALREADY_CAST
       }
       case _ => {
         votedFor = source
+        currentTerm = pdu.term
         RequestVoteState.SUCCESS
       }
     }
@@ -191,9 +202,10 @@ abstract class Peer[T](val id: Id,
       }
       case RequestVoteState.SUCCESS => {
         addVote(source, true)
+        if (peerVoteResults.values.count(_ == true) >= config.majority)
+          ascendToLeader
       }
     }
-
   }
 
   def broadcast(pdu: PDU) = config.peers
@@ -208,10 +220,6 @@ abstract class Peer[T](val id: Id,
     state = State.LEADER
     leader = id
     leaderState.reset
-    config.peers.filterNot(_ == id).foreach(id => {
-      leaderState.matchIndex.put(id, 0)
-      leaderState.nextIndex.put(id, lastAppliedIndex)
-    })
   }
 
   def descendToFollower(withTerm: Term, withLeader: Id) {
@@ -234,7 +242,7 @@ abstract class Peer[T](val id: Id,
     resetVotes
     addVote(id, true)
 
-    val pdu = RequestVote(currentTerm, id, lastAppliedIndex, lastAppliedTerm)
+    val pdu = RequestVote(currentTerm, id, lastApplied)
     broadcast(pdu)
   }
 
@@ -243,14 +251,14 @@ abstract class Peer[T](val id: Id,
 
     if (leaderState.updatePing(currentTime)) {
       leaderState.lastTimePing = currentTime
-      broadcast(AppendEntries(currentTerm, leader, lastAppliedIndex, lastAppliedTerm, Seq(), commitIndex))
+      broadcast(AppendEntries(currentTerm, leader, lastApplied, Seq(), commitIndex))
     }
   }
 
   def shouldIncrementTerm = {
     if (votingTerm != currentTerm) true
-    else if (peerVoteResults.exists(_ == NOT_VOTED)) false
-    else true
+    else if (currentTerm ==  NO_TERM) true
+    else peerVoteResults.size == config.peers.size -1
   }
 
   def resetVotes: Unit = {

@@ -23,5 +23,8 @@ package object raft {
     override def compare(that: Duration) = this.toMillis.compareTo(that.toMillis)
   }
 
-  case class Config(peers: Seq[Id])
+  case class Config(peers: Seq[Id]) {
+    lazy val size = peers.size
+    lazy val majority = size/2+1
+  }
 }
