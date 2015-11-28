@@ -16,6 +16,7 @@ class MemorySpec extends Specification with Logging {
     trait TestRepo extends LogRepository[T] {
       override def getEntries(startIndex: Index, endIndex: Index)  = repo.getEntries(startIndex, endIndex)
       override def putEntries(entries: Seq[LogEntry[T]]) {repo.putEntries(entries)}
+      override def containsEntry(index: Index) = repo.containsEntry(index)
     }
 
     trait TestBroker extends Broker {

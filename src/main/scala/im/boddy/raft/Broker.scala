@@ -27,6 +27,8 @@ class AsyncBroker[T] (config: Config, timeout: Duration) extends Logging {
 
       override def putEntries(entries: Seq[LogEntry[T]]) = repo.putEntries(entries)
 
+      override def containsEntry(index: Index) = repo.containsEntry(index)
+
       override def send(pdu: AddressedPDU): Unit = offer(pdu)
 
       override def receive(timeout: Duration): Option[AddressedPDU] = {

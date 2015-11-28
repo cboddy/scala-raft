@@ -32,6 +32,6 @@ class BufferLogRepository[T] extends LogRepository[T] {
     getEntry(index)
     true
   } catch {
-    case _ => false
+    case _ : Throwable => false
   }
 }
