@@ -34,7 +34,7 @@ case class AppendEntriesAck(term: Term,
 
 
 case object RequestVoteState extends Enumeration {
-  val TERM_NOT_CURRENT, VOTE_ALREADY_CAST, SUCCESS = Value
+  val TERM_NOT_CURRENT, VOTE_ALREADY_CAST, LOG_OUT_OF_DATE, SUCCESS = Value
 }
 
 case class RequestVoteAck(term: Term, state: RequestVoteState.Value, leader: Id) extends PDU(term) {

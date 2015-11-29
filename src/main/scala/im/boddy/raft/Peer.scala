@@ -135,15 +135,20 @@ abstract class Peer[T](val id: Id,
 
     val (source, pdu) = (appendEntries.source, appendEntries.pdu.asInstanceOf[AppendEntries[T]])
 
+    lazy val ensureFollower = () => {
+      if (source != leader || state != State.FOLLOWER) {
+        descendToFollower(pdu.term, source)
+      }
+    }
     val appendState: AppendState.Value = pdu match {
 
       case _ if pdu.term < currentTerm => AppendState.TERM_NOT_CURRENT
-      case _ if lastApplied != pdu.previous => AppendState.REQUEST_MISSING_ENTRIES
+      case _ if lastApplied != pdu.previous => {
+        ensureFollower()
+        AppendState.REQUEST_MISSING_ENTRIES
+      }
       case _ => {
-        if (source != leader || state != State.FOLLOWER) {
-          descendToFollower(pdu.term, source)
-        }
-
+        ensureFollower()
         if (pdu.entries.nonEmpty) {
           putEntries(pdu.entries)
           lastApplied = pdu.entries.last.id
@@ -168,10 +173,19 @@ abstract class Peer[T](val id: Id,
   def handleRequestVote(requestVote: AddressedPDU) = {
     val (source, pdu) = (requestVote.source, requestVote.pdu.asInstanceOf[RequestVote])
 
+    lazy val candidateLogOutOfDate = pdu.previous < lastApplied
+
     val voteState: RequestVoteState.Value = pdu match {
 
-      case _ if pdu.term < currentTerm => RequestVoteState.TERM_NOT_CURRENT
+      case _ if pdu.term < currentTerm => {
+        //received PDU with term less than peers
+        RequestVoteState.TERM_NOT_CURRENT
+      }
+
+      case _ if candidateLogOutOfDate => RequestVoteState.LOG_OUT_OF_DATE
+
       case _ if pdu.term == currentTerm => votedFor match {
+        //received PDU with term equal to  peer's
         case x if x == NOT_VOTED => {
           votedFor = source
           RequestVoteState.SUCCESS
@@ -182,8 +196,13 @@ abstract class Peer[T](val id: Id,
         case _ => RequestVoteState.VOTE_ALREADY_CAST
       }
       case _ => {
-        votedFor = source
+        //received PDU with term in advance of peer's
         currentTerm = pdu.term
+
+        state = State.FOLLOWER
+        leader = NO_LEADER
+
+        votedFor = source
         RequestVoteState.SUCCESS
       }
     }
@@ -256,9 +275,10 @@ abstract class Peer[T](val id: Id,
   }
 
   def shouldIncrementTerm = {
-    if (votingTerm != currentTerm) true
-    else if (currentTerm ==  NO_TERM) true
-    else peerVoteResults.size == config.peers.size -1
+    //    if (votingTerm != currentTerm) true
+    //    else if (currentTerm ==  NO_TERM) true
+    //    true
+    true
   }
 
   def resetVotes: Unit = {
