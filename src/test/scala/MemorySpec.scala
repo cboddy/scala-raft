@@ -43,8 +43,8 @@ class MemorySpec extends Specification with Logging {
 
       val (out, in, peer, system) = testSystem()(AddressedPDU(-1, 1, RequestVote(-1, 2, Entry(0, -1))))
       peer.peerTick
-      in.size() mustEqual(1)
-      val response : AddressedPDU = in.take()
+      in.size() mustEqual (1)
+      val response: AddressedPDU = in.take()
       val responsePdu: PDU = response.pdu
       responsePdu.isInstanceOf[InvalidPDU] mustEqual true
       val invalidPdu: InvalidPDU = responsePdu.asInstanceOf[InvalidPDU]
@@ -58,41 +58,41 @@ class MemorySpec extends Specification with Logging {
 
       out.put(AddressedPDU(2, 1, RequestVote(2, 2, Entry(0, 0))))
       peer.peerTick
-      in.size() mustEqual(1)
+      in.size() mustEqual (1)
       val response = in.take()
       response.pdu.isInstanceOf[RequestVoteAck] mustEqual true
       val ack = response.pdu.asInstanceOf[RequestVoteAck]
       ack.state mustEqual RequestVoteState.TERM_NOT_CURRENT
     }
 
-//    "reject vote with not up to date previous index/term" in {
-//      val (out, in, peer, system) = testSystem()()
-//      peer.lastAppliedIndex = 10
-//      peer.lastAppliedTerm = 3
-//
-//      for (pdu <- Seq(RequestVote(2, 2, 10, 2), RequestVote(3, 2, 9, 3))) {
-//        val addressed = AddressedPDU(2, 1, pdu)
-//        out.put(addressed)
-//        peer.peerTick
-//        in.size() mustEqual(1)
-//        val response = in.take()
-//        response.pdu.isInstanceOf[RequestVoteAck] mustEqual true
-//        val ack = response.pdu.asInstanceOf[RequestVoteAck]
-//        ack.state mustEqual RequestVoteState.CANDIDATE_MISSING_PREVIOUS_ENTRY
-//      }
-//      ok
-//    }
+    //    "reject vote with not up to date previous index/term" in {
+    //      val (out, in, peer, system) = testSystem()()
+    //      peer.lastAppliedIndex = 10
+    //      peer.lastAppliedTerm = 3
+    //
+    //      for (pdu <- Seq(RequestVote(2, 2, 10, 2), RequestVote(3, 2, 9, 3))) {
+    //        val addressed = AddressedPDU(2, 1, pdu)
+    //        out.put(addressed)
+    //        peer.peerTick
+    //        in.size() mustEqual(1)
+    //        val response = in.take()
+    //        response.pdu.isInstanceOf[RequestVoteAck] mustEqual true
+    //        val ack = response.pdu.asInstanceOf[RequestVoteAck]
+    //        ack.state mustEqual RequestVoteState.CANDIDATE_MISSING_PREVIOUS_ENTRY
+    //      }
+    //      ok
+    //    }
 
     "grant vote to valid request-for-vote" in {
       val (out, in, peer, system) = testSystem()()
       peer.currentTerm = 3
-      peer.lastApplied = Entry(10,3)
+      peer.lastApplied = Entry(10, 3)
 
       for (pdu <- Seq(RequestVote(3, 2, Entry(10, 3)))) {
         val addressed = AddressedPDU(2, 1, pdu)
         out.put(addressed)
         peer.peerTick
-        in.size() mustEqual(1)
+        in.size() mustEqual (1)
         val response = in.take()
 
         response.pdu.isInstanceOf[RequestVoteAck] mustEqual true
@@ -107,7 +107,7 @@ class MemorySpec extends Specification with Logging {
     "reject vote request if vote already cast and grant vote with term and index in advance of its own" in {
       val (out, in, peer, system) = testSystem()()
       peer.currentTerm = 3
-      peer.lastApplied = Entry(10,3)
+      peer.lastApplied = Entry(10, 3)
       peer.votedFor = 3
       peer.leader = 3
 
@@ -119,7 +119,7 @@ class MemorySpec extends Specification with Logging {
         val addressed = AddressedPDU(2, 1, pdu)
         out.put(addressed)
         peer.peerTick
-        in.size() mustEqual(1)
+        in.size() mustEqual (1)
         val response = in.take()
         response.pdu.isInstanceOf[RequestVoteAck] mustEqual true
         val ack = response.pdu.asInstanceOf[RequestVoteAck]
@@ -131,13 +131,13 @@ class MemorySpec extends Specification with Logging {
 
     "call election after timeout" in {
       val (out, in, peer, system) = testSystem()()
-      peer.lastApplied= peer.lastApplied.copy(index=10)
+      peer.lastApplied = peer.lastApplied.copy(index = 10)
       peer.peerTick
 
       peer.state mustEqual State.CANDIDATE
       peer.currentTerm mustNotEqual NO_TERM
 
-      in.size mustEqual system.config.peers.size -1
+      in.size mustEqual system.config.peers.size - 1
 
       val response = in.take()
       response.pdu.isInstanceOf[RequestVote] mustEqual true
@@ -152,10 +152,10 @@ class MemorySpec extends Specification with Logging {
     "reject append-entries with term out of date" in {
       val (out, in, peer, system) = testSystem()()
       peer.currentTerm = 0
-      peer.lastApplied = peer.lastApplied.copy(term=0)
+      peer.lastApplied = peer.lastApplied.copy(term = 0)
       peer.leader = 3
 
-      val pdu = AppendEntries(peer.currentTerm-1, peer.leader, peer.lastApplied, Seq(), peer.lastApplied.index)
+      val pdu = AppendEntries(peer.currentTerm - 1, peer.leader, peer.lastApplied, Seq(), peer.lastApplied.index)
 
       out.add(AddressedPDU(2, peer.id, pdu))
       peer.peerTick
@@ -169,12 +169,12 @@ class MemorySpec extends Specification with Logging {
 
       ack.state mustEqual AppendState.TERM_NOT_CURRENT
       ack.previous mustEqual peer.lastApplied
-  }
+    }
 
     "append-entries if term is current and leader log is up-to-date" in {
       val (out, in, peer, system) = testSystem()()
       peer.currentTerm = 0
-      peer.lastApplied = peer.lastApplied.copy(term=0)
+      peer.lastApplied = peer.lastApplied.copy(term = 0)
       peer.leader = 3
 
       val pdu = AppendEntries(peer.currentTerm, peer.leader, peer.lastApplied, Seq(), peer.lastApplied.index)
@@ -197,8 +197,8 @@ class MemorySpec extends Specification with Logging {
     "reject append-entries if previous-index and previous-term don't match it's own" in {
       val (out, in, peer, system) = testSystem()()
 
-      val peerLast = Entry(term=2, index=10)
-      val lastApplied = Seq(peerLast.copy(term=3), peerLast.copy(index=20))
+      val peerLast = Entry(term = 2, index = 10)
+      val lastApplied = Seq(peerLast.copy(term = 3), peerLast.copy(index = 20))
 
       val list = lastApplied.map(e => AppendEntries(e.term, peer.leader, e, Seq(), e.index)).toList
       for (pdu <- list) {
@@ -217,21 +217,42 @@ class MemorySpec extends Specification with Logging {
         val ack = response.pdu.asInstanceOf[AppendEntriesAck]
 
         ack.state mustEqual AppendState.MISSING_ENTRIES
-//        ack.previous mustEqual peer.lastApplied
       }
-
       ok
     }
 
-  "overwrite conflicting un-committed log entries" in {
-    ???
-    ok
+    "overwrite conflicting un-committed log entries" in {
+      ???
+      ok
+    }
+
+    "update state after received append-ack" in {
+      ???
+      ok
+    }
   }
 
-  "update state after received append-ack" in {
-    ???
-    ok
-  }
 
-}
+  "Peer group" should {
+    "elect a leader" in {
+      val (config, timeout) = (Config(Seq(1,2,3)), Duration(500, TimeUnit.MILLISECONDS))
+      val broker = new AsyncBroker[Int](config, timeout)
+      val peers = config.peers.map(broker.addPeer(_, timeout))
+
+      Thread.sleep(1000*10)
+      peers.foreach(_.close)
+
+      val byState: Map[State.Value, Seq[Peer[Int]]] = peers.groupBy(_.state)
+      val maybeLeader: Option[Seq[Peer[Int]]] = byState.get(State.LEADER)
+
+      Seq(State.LEADER, State.FOLLOWER).find(! byState.contains(_)) mustEqual None
+
+      byState.get(State.CANDIDATE) mustEqual None
+      byState.get(State.LEADER).get.size mustEqual 1
+      byState.get(State.FOLLOWER).get.size mustEqual 2
+    }
+
+
+
+  }
 }

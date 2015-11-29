@@ -1,6 +1,7 @@
 package im.boddy.raft
 
 import scala.collection.mutable
+import scala.util.Random
 
 class PendingRequest(val id: RequestId, val index: Index, var nSucceeded : Int, var nFailed: Int)
 
@@ -69,12 +70,16 @@ case object State extends Enumeration {
 
 abstract class Peer[T](val id: Id,
                        val config:  Config,
-                       val electionTimeout: Duration) extends Runnable with LogRepository[T] with Broker with Logging with AutoCloseable {
+                       val timeoutSeed: Duration,
+                       val random : Random = Random)extends Runnable with LogRepository[T] with Broker with Logging with AutoCloseable {
 
   if (! config.peers.contains(id)) throw new IllegalStateException("peer "+ id + " not in config " + config)
 
-  private[raft] val leaderTimeout = electionTimeout.copy(count = electionTimeout.count/2)
-
+  private[raft] val leaderTimeout = timeoutSeed.copy(count = timeoutSeed.count/2)
+  private[raft] def electionTimeout = {
+    val count = timeoutSeed.count + random.nextInt(timeoutSeed.count)
+    timeoutSeed.copy(count = count)
+  }
   private[raft] val leaderState = new LeaderState(this)
 
   private[raft] val peerVoteResults : collection.mutable.Map[Id, Boolean] = collection.mutable.Map()

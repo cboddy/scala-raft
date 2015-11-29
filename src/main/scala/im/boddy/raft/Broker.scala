@@ -52,7 +52,7 @@ class AsyncBroker[T] (config: Config, timeout: Duration) extends Logging {
     val maybe: Option[BlockingQueue[AddressedPDU]] = msgs.get(id)
     if (maybe.isEmpty) throw new IllegalStateException("No peer with id "+ id)
 
-    log.info("polling " + id +" with timeout "+ timeout)
+//    log.info("polling " + id +" with timeout "+ timeout)
     maybe.get.poll(timeout.count, timeout.unit)
   }
 
