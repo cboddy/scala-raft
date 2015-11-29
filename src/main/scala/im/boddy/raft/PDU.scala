@@ -21,7 +21,7 @@ case class RequestVote(term: Term,
 
 
 object AppendState extends Enumeration {
-  val TERM_NOT_CURRENT, REQUEST_MISSING_ENTRIES, PEER_MISSING_ENTRIES, SUCCESS = Value
+  val TERM_NOT_CURRENT, MISSING_ENTRIES, SUCCESS = Value
 }
 
 case class AppendEntriesAck(term: Term,

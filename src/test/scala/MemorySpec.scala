@@ -169,13 +169,59 @@ class MemorySpec extends Specification with Logging {
 
       ack.state mustEqual AppendState.TERM_NOT_CURRENT
       ack.previous mustEqual peer.lastApplied
-
   }
 
-  "reject append-entries if previous-index and previous-term don't match it's own" in {
-    ???
-    ok
-  }
+    "append-entries if term is current and leader log is up-to-date" in {
+      val (out, in, peer, system) = testSystem()()
+      peer.currentTerm = 0
+      peer.lastApplied = peer.lastApplied.copy(term=0)
+      peer.leader = 3
+
+      val pdu = AppendEntries(peer.currentTerm, peer.leader, peer.lastApplied, Seq(), peer.lastApplied.index)
+
+      out.add(AddressedPDU(2, peer.id, pdu))
+      peer.peerTick
+
+      in.size mustEqual 1
+
+      val response = in.take()
+
+      response.pdu.isInstanceOf[AppendEntriesAck] mustEqual true
+      val ack = response.pdu.asInstanceOf[AppendEntriesAck]
+
+      ack.state mustEqual AppendState.SUCCESS
+      ack.previous mustEqual peer.lastApplied
+    }
+
+
+    "reject append-entries if previous-index and previous-term don't match it's own" in {
+      val (out, in, peer, system) = testSystem()()
+
+      val peerLast = Entry(term=2, index=10)
+      val lastApplied = Seq(peerLast.copy(term=3), peerLast.copy(index=20))
+
+      val list = lastApplied.map(e => AppendEntries(e.term, peer.leader, e, Seq(), e.index)).toList
+      for (pdu <- list) {
+
+        peer.currentTerm = 2
+        peer.lastApplied = peerLast
+        peer.leader = 3
+
+        out.add(AddressedPDU(2, peer.id, pdu))
+        peer.peerTick
+
+        in.size mustEqual 1
+        val response = in.take()
+
+        response.pdu.isInstanceOf[AppendEntriesAck] mustEqual true
+        val ack = response.pdu.asInstanceOf[AppendEntriesAck]
+
+        ack.state mustEqual AppendState.MISSING_ENTRIES
+//        ack.previous mustEqual peer.lastApplied
+      }
+
+      ok
+    }
 
   "overwrite conflicting un-committed log entries" in {
     ???

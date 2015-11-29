@@ -140,12 +140,14 @@ abstract class Peer[T](val id: Id,
         descendToFollower(pdu.term, source)
       }
     }
+
     val appendState: AppendState.Value = pdu match {
 
       case _ if pdu.term < currentTerm => AppendState.TERM_NOT_CURRENT
+
       case _ if lastApplied != pdu.previous => {
         ensureFollower()
-        AppendState.REQUEST_MISSING_ENTRIES
+        AppendState.MISSING_ENTRIES
       }
       case _ => {
         ensureFollower()
@@ -165,7 +167,7 @@ abstract class Peer[T](val id: Id,
     val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[AppendEntriesAck])
     pdu.state match {
       case AppendState.TERM_NOT_CURRENT => descendToFollower(pdu.term, pdu.leader)
-      case AppendState.REQUEST_MISSING_ENTRIES => leaderState.handleMissing(source, pdu.previous.index)
+      case AppendState.MISSING_ENTRIES => leaderState.handleMissing(source, pdu.previous.index)
       case AppendState.SUCCESS => leaderState.handleSuccess(source, pdu.previous)
     }
   }
