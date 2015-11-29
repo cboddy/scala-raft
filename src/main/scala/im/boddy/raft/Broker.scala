@@ -15,7 +15,7 @@ class AsyncBroker[T] (config: Config, timeout: Duration) extends Logging {
 
   private val msgs = new mutable.HashMap[Id, BlockingQueue[AddressedPDU]]()
 
-  private val threadPool = Executors.newFixedThreadPool(config.peers.size)
+  private[raft] val threadPool = Executors.newFixedThreadPool(config.peers.size)
 
   def addPeer(id: Id, timeout: Duration) : Peer[T] = {
 

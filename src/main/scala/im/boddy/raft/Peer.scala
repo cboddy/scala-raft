@@ -282,9 +282,6 @@ abstract class Peer[T](val id: Id,
   }
 
   def shouldIncrementTerm = {
-    //    if (votingTerm != currentTerm) true
-    //    else if (currentTerm ==  NO_TERM) true
-    //    true
     true
   }
 

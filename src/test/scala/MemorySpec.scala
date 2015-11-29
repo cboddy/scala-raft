@@ -65,24 +65,6 @@ class MemorySpec extends Specification with Logging {
       ack.state mustEqual RequestVoteState.TERM_NOT_CURRENT
     }
 
-    //    "reject vote with not up to date previous index/term" in {
-    //      val (out, in, peer, system) = testSystem()()
-    //      peer.lastAppliedIndex = 10
-    //      peer.lastAppliedTerm = 3
-    //
-    //      for (pdu <- Seq(RequestVote(2, 2, 10, 2), RequestVote(3, 2, 9, 3))) {
-    //        val addressed = AddressedPDU(2, 1, pdu)
-    //        out.put(addressed)
-    //        peer.peerTick
-    //        in.size() mustEqual(1)
-    //        val response = in.take()
-    //        response.pdu.isInstanceOf[RequestVoteAck] mustEqual true
-    //        val ack = response.pdu.asInstanceOf[RequestVoteAck]
-    //        ack.state mustEqual RequestVoteState.CANDIDATE_MISSING_PREVIOUS_ENTRY
-    //      }
-    //      ok
-    //    }
-
     "grant vote to valid request-for-vote" in {
       val (out, in, peer, system) = testSystem()()
       peer.currentTerm = 3
@@ -234,25 +216,51 @@ class MemorySpec extends Specification with Logging {
 
 
   "Peer group" should {
-    "elect a leader" in {
-      val (config, timeout) = (Config(Seq(1,2,3)), Duration(500, TimeUnit.MILLISECONDS))
+    val (config, timeout) = (Config(Seq(1,2,3)), Duration(500, TimeUnit.MILLISECONDS))
+
+    def startGroup = {
       val broker = new AsyncBroker[Int](config, timeout)
       val peers = config.peers.map(broker.addPeer(_, timeout))
+      Tuple2[AsyncBroker[Int], Seq[Peer[Int]]](broker, peers)
+    }
+
+    def require(nFollower: Int, nLeader: Int =1, nCandidates : Int = 0)(peers: Seq[Peer[Int]]) = {
+      val byState: Map[State.Value, Seq[Peer[Int]]] = peers.groupBy(_.state)
+
+      byState.get(State.CANDIDATE).getOrElse(Seq()).size mustEqual nCandidates
+      byState.get(State.LEADER).getOrElse(Seq()).size mustEqual nLeader
+      byState.get(State.FOLLOWER).getOrElse(Seq()).size mustEqual nFollower
+    }
+
+    "elect a leader" in {
+      val (broker, peers) = startGroup
 
       Thread.sleep(1000*10)
       peers.foreach(_.close)
 
-      val byState: Map[State.Value, Seq[Peer[Int]]] = peers.groupBy(_.state)
-      val maybeLeader: Option[Seq[Peer[Int]]] = byState.get(State.LEADER)
-
-      Seq(State.LEADER, State.FOLLOWER).find(! byState.contains(_)) mustEqual None
-
-      byState.get(State.CANDIDATE) mustEqual None
-      byState.get(State.LEADER).get.size mustEqual 1
-      byState.get(State.FOLLOWER).get.size mustEqual 2
+      require(2, 1, 0)(peers)
     }
 
+    "continue after leader is partitioned" in {
+      val (broker, peers) = startGroup
 
+      Thread.sleep(1000*10)
+      peers.foreach(_.close)
+
+      require(2, 1, 0)(peers)
+
+      val followers = peers.filterNot(_.state == State.LEADER)
+      //restart followers and continue without leader
+      followers.foreach(e => {
+        e.isFinished = false
+        broker.threadPool.submit(e)
+      })
+
+      Thread.sleep(1000*10)
+      followers.foreach(_.close)
+
+      require(1,1,0)(followers)
+    }
 
   }
 }
