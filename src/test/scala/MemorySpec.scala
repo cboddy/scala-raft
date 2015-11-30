@@ -227,9 +227,9 @@ class MemorySpec extends Specification with Logging {
 
       val req = (state: State.Value, count: Int) =>  byState.get(state).getOrElse(Seq()).size mustEqual count
 
-      req(State.CANDIDATE, nCandidates)
-      req(State.FOLLOWER, nFollower)
-      req(State.LEADER, nLeader)
+      "have correct candidate count" in req(State.CANDIDATE, nCandidates)
+      "have correct follower count" in req(State.FOLLOWER, nFollower)
+      "have correct leader count" in req(State.LEADER, nLeader)
     }
 
     "elect a leader" in {
@@ -247,7 +247,7 @@ class MemorySpec extends Specification with Logging {
       Thread.sleep(1000*10)
       peers.foreach(_.close)
 
-      require(2, 1, 0)(peers)
+      "before partition" in require(2, 1, 0)(peers)
 
       val followers = peers.filterNot(_.state == State.LEADER)
       //restart followers and continue without leader
@@ -259,7 +259,7 @@ class MemorySpec extends Specification with Logging {
       Thread.sleep(1000*10)
       followers.foreach(_.close)
 
-      require(1,1,0)(followers)
+      "after partition" in require(1,1,0)(followers)
     }
 
   }
