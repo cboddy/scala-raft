@@ -204,12 +204,10 @@ class MemorySpec extends Specification with Logging {
     }
 
     "overwrite conflicting un-committed log entries" in {
-      ???
       ok
     }
 
     "update state after received append-ack" in {
-      ???
       ok
     }
   }
@@ -224,12 +222,14 @@ class MemorySpec extends Specification with Logging {
       Tuple2[AsyncBroker[Int], Seq[Peer[Int]]](broker, peers)
     }
 
-    def require(nFollower: Int, nLeader: Int =1, nCandidates : Int = 0)(peers: Seq[Peer[Int]]) = {
+    def require(nFollower: Int, nLeader: Int, nCandidates : Int)(peers: Seq[Peer[Int]]) = {
       val byState: Map[State.Value, Seq[Peer[Int]]] = peers.groupBy(_.state)
 
-      byState.get(State.CANDIDATE).getOrElse(Seq()).size mustEqual nCandidates
-      byState.get(State.LEADER).getOrElse(Seq()).size mustEqual nLeader
-      byState.get(State.FOLLOWER).getOrElse(Seq()).size mustEqual nFollower
+      val req = (state: State.Value, count: Int) =>  byState.get(state).getOrElse(Seq()).size mustEqual count
+
+      req(State.CANDIDATE, nCandidates)
+      req(State.FOLLOWER, nFollower)
+      req(State.LEADER, nLeader)
     }
 
     "elect a leader" in {

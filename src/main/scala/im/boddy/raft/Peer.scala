@@ -2,6 +2,7 @@ package im.boddy.raft
 
 import scala.collection.mutable
 import scala.util.Random
+import im.boddy.raft.Peer._
 
 class PendingRequest(val id: RequestId, val index: Index, var nSucceeded : Int, var nFailed: Int)
 
@@ -10,7 +11,7 @@ class LeaderState[T](peer: Peer[T]) {
   val matchIndex = new mutable.HashMap[Id, Index]()
   var lastTimePing = NO_PING_SENT
 
-  private val pending = new mutable.HashMap[ClientId, PendingRequest]()
+  private val pending = new mutable.HashMap[Id, PendingRequest]()
 
   def reset = {
     matchIndex.clear()
@@ -41,7 +42,7 @@ class LeaderState[T](peer: Peer[T]) {
   }
 
 
-  def requestHasMajority(client: ClientId, request: RequestId, index: Index) : Boolean = {
+  def requestHasMajority(client: Id, request: RequestId, index: Index) : Boolean = {
     val maybe = pending.get(client)
     if (maybe.isDefined) {
       val req = maybe.get
@@ -50,11 +51,11 @@ class LeaderState[T](peer: Peer[T]) {
     else false
   }
 
-  def removePending(id: ClientId) = pending.remove(id)
+  def removePending(id: Id) = pending.remove(id)
 
-  def containsPending(id: ClientId) = pending.contains(id)
+  def containsPending(id: Id) = pending.contains(id)
 
-  def addPending(id: ClientId, req: PendingRequest) = pending.put(id, req)
+  def addPending(id: Id, req: PendingRequest) = pending.put(id, req)
 
   def updatePing(time: Long) : Boolean = {
     val deltaTime = time - lastTimePing
@@ -76,10 +77,9 @@ abstract class Peer[T](val id: Id,
   if (! config.peers.contains(id)) throw new IllegalStateException("peer "+ id + " not in config " + config)
 
   private[raft] val leaderTimeout = timeoutSeed.copy(count = timeoutSeed.count/2)
-  private[raft] def electionTimeout = {
-    val count = timeoutSeed.count + random.nextInt(timeoutSeed.count)
-    timeoutSeed.copy(count = count)
-  }
+
+  private[raft] var electionTimeout = nextElectionTimeout
+
   private[raft] val leaderState = new LeaderState(this)
 
   private[raft] val peerVoteResults : collection.mutable.Map[Id, Boolean] = collection.mutable.Map()
@@ -95,7 +95,7 @@ abstract class Peer[T](val id: Id,
   private[raft] var leader : Id = NO_LEADER
   private[raft] var votedFor : Id = NOT_VOTED
 
-  @volatile var isFinished = false
+  @volatile private[raft] var isFinished = false
 
   private[raft] var state = State.CANDIDATE
 
@@ -116,6 +116,7 @@ abstract class Peer[T](val id: Id,
           case _: AppendEntriesAck => handleAppendAck
           case _: RequestVote => handleRequestVote
           case _: RequestVoteAck => handleRequestAck
+          case _: ClientRequest[T] => handleClient
           case _ => throw new IllegalStateException("No handler for " + pdu)
         }
         handler(received)
@@ -134,19 +135,25 @@ abstract class Peer[T](val id: Id,
 
   def addressedPDU(pdu: PDU, target: Id) : AddressedPDU = AddressedPDU(id, target, pdu)
 
-  def handleAppend(appendEntries: AddressedPDU) = {
+  def handleAppend(appendEntries: AddressedPDU) : Unit = {
     if (appendEntries.target != id)
       throw new IllegalStateException("PDU "+ appendEntries +" not intended for peer "+ id)
 
     val (source, pdu) = (appendEntries.source, appendEntries.pdu.asInstanceOf[AppendEntries[T]])
 
+    val appendState = handleAppend(pdu, source)
+
+    send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastApplied, commitIndex, leader), source))
+  }
+
+  def handleAppend(pdu: AppendEntries[T], source: Id) : AppendState.Value= {
     lazy val ensureFollower = () => {
       if (source != leader || state != State.FOLLOWER) {
         descendToFollower(pdu.term, source)
       }
     }
 
-    val appendState: AppendState.Value = pdu match {
+    pdu match {
 
       case _ if pdu.term < currentTerm => AppendState.TERM_NOT_CURRENT
 
@@ -164,8 +171,6 @@ abstract class Peer[T](val id: Id,
         AppendState.SUCCESS
       }
     }
-
-    send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastApplied, commitIndex, leader), source))
   }
 
   def handleAppendAck(ack : AddressedPDU) = {
@@ -217,7 +222,7 @@ abstract class Peer[T](val id: Id,
     send(addressedPDU(RequestVoteAck(currentTerm, voteState, leader), source))
   }
 
-  def handleRequestAck(ack: AddressedPDU) = {
+  def handleRequestAck(ack: AddressedPDU): Unit = {
     val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[RequestVoteAck])
     pdu.state match {
       case RequestVoteState.TERM_NOT_CURRENT => {
@@ -234,8 +239,23 @@ abstract class Peer[T](val id: Id,
     }
   }
 
-  def broadcast(pdu: PDU) = config.peers
-    .filterNot(_ == id)
+  def handleClient(req: AddressedPDU) = {
+    val (source, pdu) = (req.source, req.pdu.asInstanceOf[ClientRequest[T]])
+    state match {
+      case State.LEADER => {
+        val entry  = LogEntry(nextEntry, pdu.value)
+        val append = AppendEntries(currentTerm, id, lastApplied, Seq(entry), commitIndex)
+        broadcast(append, _ => true)
+      }
+      case _ => {
+        val pdu = addressedPDU(ClientResponse(failure, leader), source)
+        send(pdu)
+      }
+    }
+  }
+
+  def broadcast(pdu: PDU, filter: (Id) => Boolean = _ != id) = config.peers
+    .filter(filter)
     .map(addressedPDU(pdu, _))
     .foreach(send)
 
@@ -261,15 +281,15 @@ abstract class Peer[T](val id: Id,
 
     log.info("peer " + this.toString() + " called election for term " + currentTerm)
 
-    if (shouldIncrementTerm) {
-      currentTerm += 1
+    currentTerm += 1
 
-    }
     resetVotes
     addVote(id, true)
 
     val pdu = RequestVote(currentTerm, id, lastApplied)
     broadcast(pdu)
+
+    electionTimeout = nextElectionTimeout
   }
 
   def leaderTick {
@@ -281,10 +301,6 @@ abstract class Peer[T](val id: Id,
     }
   }
 
-  def shouldIncrementTerm = {
-    true
-  }
-
   def resetVotes: Unit = {
     votingTerm = currentTerm
     peerVoteResults.clear()
@@ -292,7 +308,18 @@ abstract class Peer[T](val id: Id,
 
   def addVote(id: Id, hasVote: Boolean) = peerVoteResults.put(id, hasVote)
 
+  def nextEntry = lastApplied.copy(index = lastApplied.index+1)
+
+  private[raft] def nextElectionTimeout = {
+    val seed = timeoutSeed.count
+    timeoutSeed.copy(count = seed + random.nextInt(seed))
+  }
+
   override def toString() = id.toString
 
   def close = isFinished = true
+}
+
+object Peer {
+  val failure: Entry = Entry(NO_TERM, NO_TERM)
 }

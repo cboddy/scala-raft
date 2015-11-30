@@ -8,7 +8,6 @@ package object raft {
   type Term = Long
   type Id = Long
   type Index = Long
-  type ClientId = Long
   type RequestId = Long
 
   val NOT_VOTED : Id = -1
@@ -27,4 +26,9 @@ package object raft {
     lazy val size = peers.size
     lazy val majority = size/2+1
   }
+
+  trait Logging {
+    def log = Logger.getGlobal
+  }
+
 }

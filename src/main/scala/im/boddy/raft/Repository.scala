@@ -7,8 +7,8 @@ case class Entry(index: Index, term: Term) extends Ordered[Entry] {
     val comp = this.term.compare(that.term)
     if (comp == 0) this.index.compare(that.index) else comp
   }
-
 }
+
 case class LogEntry[T](id: Entry, value : T)
 
 trait LogRepository[T] {
