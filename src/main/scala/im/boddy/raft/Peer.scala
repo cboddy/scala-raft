@@ -279,9 +279,9 @@ abstract class Peer[T](val id: Id,
 
   def callElection {
 
-    log.info("peer " + this.toString() + " called election for term " + currentTerm)
-
     currentTerm += 1
+
+    log.info("peer " + this.toString() + " called election for term " + currentTerm)
 
     resetVotes
     addVote(id, true)
