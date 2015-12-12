@@ -104,22 +104,19 @@ abstract class Peer[T](val id: Id,
 
     val opt: Option[AddressedPDU] = receive(timeout)
     if (opt.nonEmpty) {
-      val received = opt.get
-      val source = received.source
-      val pdu = received.pdu
-
-      if (! config.peers.contains(source))
-        send(addressedPDU(InvalidPDU(InvalidPduState.INVALID_ID, currentTerm), source))
-      else {
-        val handler: (AddressedPDU => Unit) = pdu match {
-          case _: AppendEntries[T] => handleAppend
-          case _: AppendEntriesAck => handleAppendAck
-          case _: RequestVote => handleRequestVote
-          case _: RequestVoteAck => handleRequestAck
-          case _: ClientRequest[T] => handleClient
-          case _ => throw new IllegalStateException("No handler for " + pdu)
+      val received: AddressedPDU = opt.get
+      val (source, target, pdu) = (received.source, received.target, received.pdu)
+      received match {
+        case _ if target != id => send(AddressedPDU(id, source, InvalidPDU(InvalidPduState.INVALID_ID, currentTerm)))
+        case _ if ! config.peers.exists(_ == source) => send(AddressedPDU(id, source, InvalidPDU(InvalidPduState.INVALID_SOURCE, currentTerm)))
+        case _ => pdu match {
+          case ae: AppendEntries[T] => handleAppend(source, ae)
+          case aa: AppendEntriesAck => handleAppendAck(source, aa)
+          case rv: RequestVote => handleRequestVote(source, rv)
+          case ra: RequestVoteAck => handleRequestAck(source, ra)
+          case cr: ClientRequest[T] => handleClient(source, cr)
+          case _ => throw new IllegalStateException("Peer "+ this + " has no handler for pdu "+ pdu)
         }
-        handler(received)
       }
     }
     else if (state != State.LEADER) callElection
@@ -135,25 +132,14 @@ abstract class Peer[T](val id: Id,
 
   def addressedPDU(pdu: PDU, target: Id) : AddressedPDU = AddressedPDU(id, target, pdu)
 
-  def handleAppend(appendEntries: AddressedPDU) : Unit = {
-    if (appendEntries.target != id)
-      throw new IllegalStateException("PDU "+ appendEntries +" not intended for peer "+ id)
-
-    val (source, pdu) = (appendEntries.source, appendEntries.pdu.asInstanceOf[AppendEntries[T]])
-
-    val appendState = handleAppend(pdu, source)
-
-    send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastApplied, commitIndex, leader), source))
-  }
-
-  def handleAppend(pdu: AppendEntries[T], source: Id) : AppendState.Value= {
+  def handleAppend(source: Id, pdu: AppendEntries[T]) : Unit = {
     lazy val ensureFollower = () => {
       if (source != leader || state != State.FOLLOWER) {
         descendToFollower(pdu.term, source)
       }
     }
 
-    pdu match {
+    val appendState = pdu match {
 
       case _ if pdu.term < currentTerm => AppendState.TERM_NOT_CURRENT
 
@@ -171,10 +157,10 @@ abstract class Peer[T](val id: Id,
         AppendState.SUCCESS
       }
     }
+    send(addressedPDU(AppendEntriesAck(currentTerm, appendState, lastApplied, commitIndex, leader), source))
   }
 
-  def handleAppendAck(ack : AddressedPDU) = {
-    val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[AppendEntriesAck])
+  def handleAppendAck(source: Id, pdu: AppendEntriesAck) = {
     pdu.state match {
       case AppendState.TERM_NOT_CURRENT => descendToFollower(pdu.term, pdu.leader)
       case AppendState.MISSING_ENTRIES => leaderState.handleMissing(source, pdu.previous.index)
@@ -182,8 +168,7 @@ abstract class Peer[T](val id: Id,
     }
   }
 
-  def handleRequestVote(requestVote: AddressedPDU) = {
-    val (source, pdu) = (requestVote.source, requestVote.pdu.asInstanceOf[RequestVote])
+  def handleRequestVote(source: Id, pdu: RequestVote) = {
 
     lazy val candidateLogOutOfDate = pdu.previous < lastApplied
 
@@ -222,8 +207,7 @@ abstract class Peer[T](val id: Id,
     send(addressedPDU(RequestVoteAck(currentTerm, voteState, leader), source))
   }
 
-  def handleRequestAck(ack: AddressedPDU): Unit = {
-    val (source, pdu) = (ack.source, ack.pdu.asInstanceOf[RequestVoteAck])
+  def handleRequestAck(source: Id, pdu: RequestVoteAck): Unit = {
     pdu.state match {
       case RequestVoteState.TERM_NOT_CURRENT => {
         descendToFollower(pdu.term, pdu.leader)
@@ -239,8 +223,7 @@ abstract class Peer[T](val id: Id,
     }
   }
 
-  def handleClient(req: AddressedPDU) = {
-    val (source, pdu) = (req.source, req.pdu.asInstanceOf[ClientRequest[T]])
+  def handleClient(source: Id, pdu: ClientRequest[T]) = {
     state match {
       case State.LEADER => {
         val entry  = LogEntry(nextEntry, pdu.value)

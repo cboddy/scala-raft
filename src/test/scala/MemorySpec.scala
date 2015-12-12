@@ -48,7 +48,7 @@ class MemorySpec extends Specification with Logging {
       val responsePdu: PDU = response.pdu
       responsePdu.isInstanceOf[InvalidPDU] mustEqual true
       val invalidPdu: InvalidPDU = responsePdu.asInstanceOf[InvalidPDU]
-      invalidPdu.state mustEqual InvalidPduState.INVALID_ID
+      invalidPdu.state mustEqual InvalidPduState.INVALID_SOURCE
       invalidPdu.term mustEqual NO_TERM
     }
 
@@ -58,7 +58,7 @@ class MemorySpec extends Specification with Logging {
 
       out.put(AddressedPDU(2, 1, RequestVote(2, 2, Entry(0, 0))))
       peer.peerTick
-      in.size() mustEqual (1)
+      in.size() mustEqual 1
       val response = in.take()
       response.pdu.isInstanceOf[RequestVoteAck] mustEqual true
       val ack = response.pdu.asInstanceOf[RequestVoteAck]
@@ -74,7 +74,7 @@ class MemorySpec extends Specification with Logging {
         val addressed = AddressedPDU(2, 1, pdu)
         out.put(addressed)
         peer.peerTick
-        in.size() mustEqual (1)
+        in.size() mustEqual 1
         val response = in.take()
 
         response.pdu.isInstanceOf[RequestVoteAck] mustEqual true
@@ -222,7 +222,7 @@ class MemorySpec extends Specification with Logging {
       Tuple2[AsyncBroker[Int], Seq[Peer[Int]]](broker, peers)
     }
 
-    def require(nFollower: Int, nLeader: Int, nCandidates : Int)(peers: Seq[Peer[Int]]) = {
+    def requireState(nFollower: Int, nLeader: Int, nCandidates : Int)(peers: Seq[Peer[Int]]) = {
       val byState: Map[State.Value, Seq[Peer[Int]]] = peers.groupBy(_.state)
 
       val req = (state: State.Value, count: Int) =>  byState.get(state).getOrElse(Seq()).size mustEqual count
@@ -238,7 +238,7 @@ class MemorySpec extends Specification with Logging {
       Thread.sleep(1000*3)
       peers.foreach(_.close)
 
-      require(2, 1, 0)(peers)
+      requireState(2, 1, 0)(peers)
     }
 
     "continue after leader is partitioned" in {
@@ -247,7 +247,7 @@ class MemorySpec extends Specification with Logging {
       Thread.sleep(1000*3)
       peers.foreach(_.close)
 
-      "before partition" in require(2, 1, 0)(peers)
+      "before partition" in requireState(2, 1, 0)(peers)
 
       val followers = peers.filterNot(_.state == State.LEADER)
       //restart followers and continue without leader
@@ -259,7 +259,7 @@ class MemorySpec extends Specification with Logging {
       Thread.sleep(1000*10)
       followers.foreach(_.close)
 
-      "after partition" in require(1,1,0)(followers)
+      "after partition" in requireState(1,1,0)(followers)
     }
 
   }
