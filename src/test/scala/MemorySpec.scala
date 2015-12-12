@@ -214,7 +214,7 @@ class MemorySpec extends Specification with Logging {
 
 
   "Peer group" should {
-    val (config, timeout) = (Config(Seq(1,2,3)), Duration(500, TimeUnit.MILLISECONDS))
+    val (config, timeout) = (Config(Seq(1,2,3)), Duration(100, TimeUnit.MILLISECONDS))
 
     def startGroup = {
       val broker = new AsyncBroker[Int](config, timeout)
@@ -235,7 +235,7 @@ class MemorySpec extends Specification with Logging {
     "elect a leader" in {
       val (broker, peers) = startGroup
 
-      Thread.sleep(1000*10)
+      Thread.sleep(1000*3)
       peers.foreach(_.close)
 
       require(2, 1, 0)(peers)
@@ -244,7 +244,7 @@ class MemorySpec extends Specification with Logging {
     "continue after leader is partitioned" in {
       val (broker, peers) = startGroup
 
-      Thread.sleep(1000*10)
+      Thread.sleep(1000*3)
       peers.foreach(_.close)
 
       "before partition" in require(2, 1, 0)(peers)
